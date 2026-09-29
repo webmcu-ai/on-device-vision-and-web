@@ -1,6 +1,6 @@
 // ======================================================
 // XIAO ML KIT (OR XIAO ESP32S3 SENSE)
-// FULL VISION ML  — v46  (firmware-v003)
+// FULL VISION ML  — v47  (firmware-v005)
 //
 //
 // Small Image collection, training, inference for education and proof of concept
@@ -15,6 +15,13 @@
 //
 // Github Profile https://github.com/hpssjellis
 // LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
+//
+// v47 changes (firmware-v005):
+//  - Optional Web Serial debug frames for the web trainer page. Nothing extra is printed unless the page
+//    sends 'D' (it repeats it every 5 s; the device stops after 15 s of silence, or on 'd').
+//    While on, the device prints one "@F ..." line: the camera JPEG (base64) every 10th inference with the
+//    class probabilities, logits, centre input pixel and a heatmap, plus each saved image and a slow live
+//    preview (about 1 per second) while collecting. The page shows it and compares with its own model.
 //
 // v46 changes (firmware-v003):
 //  - Class labels are now read from /header/config.json at boot (written by the web trainer page).
@@ -69,6 +76,7 @@
 #include <algorithm>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include "mbedtls/base64.h"   // v47: base64 for the Web Serial debug frames
 
 U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
 
@@ -639,6 +647,95 @@ void myLoadConfig() {
     Serial.printf("WARNING: config.json conv2_filters %d but the sketch CONV2_FILTERS is %d\n", v, CONV2_FILTERS);
 }
 
+// ======================================================
+// v47: WEB SERIAL DEBUG FRAMES
+// The web trainer page sends 'D' when it connects and every 5 s, and 'd' when it disconnects.
+// While a 'D' was seen in the last 15 s the device prints frame lines that start with "@F":
+//   @F <kind> <n> <pred> <probs|-> <logits|-> <layout> <centre RGB|-> <heatSide> <heat base64|0/-> <jpeg base64>
+// kind I = inference (every 10th frame), C = image just saved, P = live preview while collecting (about 1/s)
+// The JPEG is exactly what the camera produced. Heat = max over conv2 filters, scaled 0..255.
+// ======================================================
+// ==DBG START==
+bool myDebugStream = false;
+unsigned long myDebugLastSeen = 0;
+
+bool myHandleDebugChar(char c) {
+  if (c == 'D') {
+    if (!myDebugStream) Serial.println("Debug frames ON");
+    myDebugStream = true;
+    myDebugLastSeen = millis();
+    return true;
+  }
+  if (c == 'd') {
+    if (myDebugStream) Serial.println("Debug frames OFF");
+    myDebugStream = false;
+    return true;
+  }
+  return false;
+}
+
+static void myPrintB64(const uint8_t* d, size_t n) {
+  unsigned char out[520];                  // 384 input bytes -> 512 characters + terminator
+  while (n > 0) {
+    size_t take = n > 384 ? 384 : n;       // multiple of 3, so the chunks join into one valid base64 string
+    size_t ol = 0;
+    mbedtls_base64_encode(out, sizeof(out), &ol, d, take);
+    Serial.write(out, ol);
+    d += take;
+    n -= take;
+  }
+}
+
+void myDebugSendFrame(char kind, int n, camera_fb_t* fb, int pred, const float* logits) {
+  if (!myDebugStream || !fb || !Serial) return;
+  if (millis() - myDebugLastSeen > 15000) { myDebugStream = false; return; }   // page stopped sending heartbeats
+  const bool inf = (kind == 'I' && logits != nullptr);
+  Serial.printf("@F %c %d %d ", kind, n, pred);
+  if (inf) {
+    for (int i = 0; i < NUM_CLASSES; i++) { if (i) Serial.print(','); Serial.print(myDense_output[i], 4); }
+    Serial.print(' ');
+    for (int i = 0; i < NUM_CLASSES; i++) { if (i) Serial.print(','); Serial.print(logits[i], 4); }
+  } else {
+    Serial.print("- -");
+  }
+  Serial.printf(" %dx%dx%d ", INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS);
+  if (inf) {
+    int c = ((INPUT_SIZE / 2) * INPUT_SIZE + INPUT_SIZE / 2) * 3;    // centre pixel of the model input
+    Serial.print(myInputBuffer[c], 4); Serial.print(',');
+    Serial.print(myInputBuffer[c + 1], 4); Serial.print(',');
+    Serial.print(myInputBuffer[c + 2], 4);
+  } else {
+    Serial.print('-');
+  }
+  Serial.print(' ');
+  if (inf) {
+    const int hn = CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE;
+    static uint8_t heat[CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE];
+    float lo = 1e30f, hi = -1e30f;
+    for (int i = 0; i < hn; i++) {
+      float m = myConv2_output[i];
+      for (int f = 1; f < CONV2_FILTERS; f++) { float v = myConv2_output[f * hn + i]; if (v > m) m = v; }
+      if (m < lo) lo = m;
+      if (m > hi) hi = m;
+    }
+    float span = hi - lo;
+    if (span < 1e-9f) span = 1.0f;
+    for (int i = 0; i < hn; i++) {
+      float m = myConv2_output[i];
+      for (int f = 1; f < CONV2_FILTERS; f++) { float v = myConv2_output[f * hn + i]; if (v > m) m = v; }
+      heat[i] = (uint8_t)(255.0f * (m - lo) / span + 0.5f);
+    }
+    Serial.printf("%d ", CONV2_OUTPUT_SIZE);
+    myPrintB64(heat, hn);
+  } else {
+    Serial.print("0 -");
+  }
+  Serial.print(' ');
+  myPrintB64(fb->buf, fb->len);
+  Serial.println();
+}
+// ==DBG END==
+
 void mySaveWeights() {
   if (!mySDavailable) {
     Serial.println("No SD card - cannot save weights");
@@ -714,7 +811,7 @@ void setup() {
   while (!Serial && millis() < 3000); 
   delay(1000);  // slow down the startup
   
-  Serial.println("\n=== XIAO ESP32-S3 ML System Starting (v46) ===");
+  Serial.println("\n=== XIAO ESP32-S3 ML System Starting (v47) ===");
   Serial.printf("Layout: INPUT_SIZE %d, CONV1_FILTERS %d, CONV2_FILTERS %d, NUM_CLASSES %d\n",
                 INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS, NUM_CLASSES);
   Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
@@ -939,7 +1036,7 @@ void myActionCollect(int classIdx) {
   }
 
   unsigned long lastCameraDrain = 0;  // how often we service the camera buffer
-  unsigned long lastOLED = 0;         // how often we actually update the OLED
+  unsigned long lastOLED = 0; unsigned long lastDebugPreview = 0;         // how often we actually update the OLED
   bool oledNeedsUpdate = false;
   bool shouldCapture = false;
 
@@ -953,6 +1050,11 @@ void myActionCollect(int classIdx) {
       if (!shouldCapture) {  // don't grab preview frames if a capture is pending
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb) {
+          // v47: slow live preview to the web page (only when it asked for debug frames)
+          if (myDebugStream && now - lastDebugPreview > 1000) {
+            lastDebugPreview = now;
+            myDebugSendFrame('P', counts[classIdx], fb, -1, nullptr);
+          }
           // Only pay for RGB conversion when the OLED is due for a refresh (250ms)
           if (now - lastOLED > 250 && myRgbBuffer) {
             if (fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer)) {
@@ -974,7 +1076,9 @@ void myActionCollect(int classIdx) {
     // --- SERIAL INPUT ---
     if (Serial.available()) {
       char c = Serial.read();
-      if (c == 'l' || c == 'L') {
+      if (myHandleDebugChar(c)) {
+        // handled: web page debug heartbeat
+      } else if (c == 'l' || c == 'L') {
         myResetMenuState();
         return;
       } else if (c == 't' || c == 'T') {
@@ -1007,6 +1111,7 @@ void myActionCollect(int classIdx) {
           counts[classIdx]++;
           Serial.printf("Saved: %s (Total: %d)\n", fileName.c_str(), counts[classIdx]);
           myDisplayImageOnOLED(fb, counts[classIdx]);  // shows count badge
+          myDebugSendFrame('C', counts[classIdx], fb, -1, nullptr);   // v47: saved image to the web page
           delay(300);
           lastOLED = millis();  // don't immediately overwrite the snapshot with LIVE
         }
@@ -1606,6 +1711,7 @@ void myActionInfer() {
   unsigned long frameTimes[10];
   int frameIndex = 0;
   int pred = 0;  // Store prediction outside loop for printing
+  unsigned long myInferCount = 0;   // v47: frame number for the debug frames
   
   while (true) {
     unsigned long frameStart = millis();
@@ -1613,7 +1719,9 @@ void myActionInfer() {
     // Serial input check (fast, every frame)
     if (Serial.available()) {
       char c = Serial.read();
-      if (c == 't' || c == 'T' || c == 'l' || c == 'L') {
+      if (myHandleDebugChar(c)) {
+        // handled: web page debug heartbeat
+      } else if (c == 't' || c == 'T' || c == 'l' || c == 'L') {
         myResetMenuState();
         return;
       }
@@ -1657,6 +1765,7 @@ void myActionInfer() {
       float myLogits[NUM_CLASSES];
       myForwardPass(myInputBuffer, myLogits);
       
+      myInferCount++;
       // Find prediction
       pred = 0;
       for(int i=1; i<NUM_CLASSES; i++) {
@@ -1666,6 +1775,7 @@ void myActionInfer() {
       // Every 10th frame: draw live image + label overlay on OLED.
       // Done HERE while myRgbBuffer is still valid (before fb is returned).
       if (frameIndex == 9) {
+        myDebugSendFrame('I', (int)myInferCount, fb, pred, myLogits);   // v47: every 10th inference to the web page
         int oW = u8g2.getDisplayWidth();
         int oH = u8g2.getDisplayHeight();
         int scX = 240 / oW;
@@ -1806,7 +1916,10 @@ void myHandleMenuNavigation() {
     char c = Serial.read();
 
     // Single-digit direct selection (works for NUM_CLASSES up to 9+2=11 items via digit keys)
-    if (c >= '1' && c <= '9') {
+    if (myHandleDebugChar(c)) {
+      // handled: web page debug heartbeat
+    }
+    else if (c >= '1' && c <= '9') {
       int newIndex = c - '0';
       if (newIndex <= myTotalItems) {
         myMenuIndex = newIndex;
