@@ -1,6 +1,6 @@
 // ======================================================
 // XIAO ML KIT (OR XIAO ESP32S3 SENSE)
-// FULL VISION ML  — v45  (firmware-v002)
+// FULL VISION ML  — v46  (firmware-v003)
 //
 //
 // Small Image collection, training, inference for education and proof of concept
@@ -15,6 +15,13 @@
 //
 // Github Profile https://github.com/hpssjellis
 // LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
+//
+// v46 changes (firmware-v003):
+//  - Class labels are now read from /header/config.json at boot (written by the web trainer page).
+//    The number of labels in the file must equal NUM_CLASSES; if not, the compiled labels are kept and a
+//    message is printed. NUM_CLASSES, INPUT_SIZE and the filter counts are still compile-time, so adding or
+//    removing a class means changing NUM_CLASSES and reflashing. INPUT_SIZE / filter counts in config.json
+//    are only compared with the sketch and a WARNING is printed on mismatch.
 //
 // v45 changes (firmware-v002):
 //  - Camera is now flipped vertically as well as mirrored, to match the images from the web trainer page
@@ -531,6 +538,107 @@ bool myLoadWeights() {
   return true;
 }
 
+// ======================================================
+// v46: READ CLASS LABELS FROM /header/config.json
+// The web trainer page writes this file. Only the "classes" list is used, and only when it has exactly
+// NUM_CLASSES entries. The sketch's compiled myClassLabels[] are the fallback.
+// ======================================================
+// ==CFG PARSE START==
+static bool myJsonInt(const String& t, const char* key, int& out) {
+  String k("\"");
+  k += key;
+  k += "\"";
+  int p = t.indexOf(k.c_str());
+  if (p < 0) return false;
+  p = t.indexOf(':', p);
+  if (p < 0) return false;
+  p++;
+  int len = (int)t.length();
+  while (p < len && (t[p] == ' ' || t[p] == '\n' || t[p] == '\r' || t[p] == '\t')) p++;
+  bool neg = false;
+  if (p < len && t[p] == '-') { neg = true; p++; }
+  if (p >= len || t[p] < '0' || t[p] > '9') return false;
+  long v = 0;
+  while (p < len && t[p] >= '0' && t[p] <= '9') { v = v * 10 + (t[p] - '0'); p++; }
+  out = (int)(neg ? -v : v);
+  return true;
+}
+
+// Returns the number of strings found in the JSON array named key, or -1 if the key or array is missing.
+static int myJsonStringArray(const String& t, const char* key, std::vector<String>& out) {
+  String k("\"");
+  k += key;
+  k += "\"";
+  int p = t.indexOf(k.c_str());
+  if (p < 0) return -1;
+  p = t.indexOf('[', p);
+  if (p < 0) return -1;
+  p++;
+  int len = (int)t.length();
+  out.clear();
+  while (p < len) {
+    char c = t[p];
+    if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == ',') { p++; continue; }
+    if (c == ']') break;
+    if (c != '"') return -1;              // not a list of strings
+    p++;
+    String s("");
+    while (p < len && t[p] != '"') {
+      if (t[p] == '\\' && p + 1 < len) p++;   // keep the escaped character
+      s += t[p];
+      p++;
+    }
+    if (p >= len) return -1;              // unterminated string
+    p++;                                  // closing quote
+    out.push_back(s);
+  }
+  return (int)out.size();
+}
+// ==CFG PARSE END==
+
+void myLoadConfig() {
+  if (!mySDavailable) return;
+  if (!SD.exists("/header/config.json")) {
+    Serial.println("No /header/config.json - using the class labels compiled into the sketch");
+    return;
+  }
+  File f = SD.open("/header/config.json", FILE_READ);
+  if (!f) return;
+  size_t sz = f.size();
+  if (sz == 0 || sz > 4096) {
+    Serial.printf("config.json ignored: unexpected size %u bytes\n", (unsigned)sz);
+    f.close();
+    return;
+  }
+  String txt;
+  txt.reserve(sz + 1);
+  while (f.available()) txt += (char)f.read();
+  f.close();
+
+  std::vector<String> names;
+  int n = myJsonStringArray(txt, "classes", names);
+  if (n < 0) {
+    Serial.println("config.json has no readable \"classes\" list - keeping the compiled class labels");
+  } else if (n != NUM_CLASSES) {
+    Serial.printf("config.json lists %d classes but the sketch has NUM_CLASSES %d - keeping the compiled labels.\n", n, NUM_CLASSES);
+    Serial.println("To add or remove classes, change NUM_CLASSES and myClassLabels[] in the sketch and reflash.");
+  } else {
+    Serial.println("Class labels loaded from /header/config.json:");
+    for (int i = 0; i < NUM_CLASSES; i++) {
+      myClassLabels[i] = names[i];
+      Serial.printf("  %d: %s\n", i, myClassLabels[i].c_str());
+    }
+  }
+
+  int v;
+  if (myJsonInt(txt, "input_size", v) && v != INPUT_SIZE)
+    Serial.printf("WARNING: config.json input_size %d but the sketch INPUT_SIZE is %d\n", v, INPUT_SIZE);
+  if (myJsonInt(txt, "conv1_filters", v) && v != CONV1_FILTERS)
+    Serial.printf("WARNING: config.json conv1_filters %d but the sketch CONV1_FILTERS is %d\n", v, CONV1_FILTERS);
+  if (myJsonInt(txt, "conv2_filters", v) && v != CONV2_FILTERS)
+    Serial.printf("WARNING: config.json conv2_filters %d but the sketch CONV2_FILTERS is %d\n", v, CONV2_FILTERS);
+}
+
 void mySaveWeights() {
   if (!mySDavailable) {
     Serial.println("No SD card - cannot save weights");
@@ -606,7 +714,7 @@ void setup() {
   while (!Serial && millis() < 3000); 
   delay(1000);  // slow down the startup
   
-  Serial.println("\n=== XIAO ESP32-S3 ML System Starting (v45) ===");
+  Serial.println("\n=== XIAO ESP32-S3 ML System Starting (v46) ===");
   Serial.printf("Layout: INPUT_SIZE %d, CONV1_FILTERS %d, CONV2_FILTERS %d, NUM_CLASSES %d\n",
                 INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS, NUM_CLASSES);
   Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
@@ -640,6 +748,7 @@ if (!myRgbBuffer) {
     delay(2000);
   } else {
     Serial.println("SD card mounted successfully");
+    myLoadConfig();   // v46: class labels from /header/config.json
   }
 
   camera_config_t config;
