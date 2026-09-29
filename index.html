@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  webMCU-AI  |  Vision CNN SD trainer  |  v003
+  webMCU-AI  |  Vision CNN SD trainer  |  v005
   Companion page for the XIAO ESP32-S3 "FULL VISION ML v44" firmware.
   Reads images/<class>/*.jpg from the SD card, trains the same CNN (input size and filters selectable) in plain JS,
   analyzes the dataset, and writes header/myWeights.bin back for the device to load.
@@ -10,7 +10,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vision CNN SD trainer v003</title>
+<title>Vision CNN SD trainer v005</title>
 <style>
 :root{--bg:#11151b;--panel:#182029;--panel2:#1f2a36;--line:#2c3947;--text:#dde5ee;--mut:#8b9aac;--acc:#66d1bd;--acc-ink:#062a24;--bad:#ef6b73;--warn:#e9b44c;--ok:#7bd88f;--r:8px}
 *{box-sizing:border-box}
@@ -91,8 +91,8 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 </head>
 <body>
 <header>
-  <h1>Vision CNN SD trainer<span class="ver">v003</span></h1>
-  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44, or firmware-v003 for config.json class names): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
+  <h1>Vision CNN SD trainer<span class="ver">v005</span></h1>
+  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44, or firmware-v005 for config.json class names and debug frames): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
   <p>Everything runs in this page. Images and weights never leave your computer.</p>
 </header>
 <main>
@@ -129,9 +129,10 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
         <select id="capClass" aria-label="Class to capture into"></select>
         <button id="btnCapture" class="primary">Capture (Space)</button>
         <button id="btnBurst" class="burst">Burst 10 (B)</button>
+        <label class="chk" style="gap:6px">Delay <input type="number" id="burstMs" value="0" min="0" max="2000" step="10" style="width:84px" aria-label="Burst delay in milliseconds"> ms</label>
       </div>
       <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). firmware-v002 and later also flip vertically, so device and page images match.</label>
-      <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip. Burst takes 10 frames about 0.1 s apart while the button is red, then saves them. Burst frames are near-duplicates, so move or tilt the object between bursts.</p>
+      <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip. Burst takes 10 fresh camera frames back to back, plus the delay you set between them, while the button is red, then saves them. Burst frames are near-duplicates, so move or tilt the object between bursts.</p>
     </div>
   </div>
 
@@ -235,11 +236,10 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <button id="btnSaveW" class="primary">Save weights to header/myWeights.bin</button>
     <button id="btnSaveCfg">Write config.json only</button>
     <button id="btnSaveZip">Save .zip</button>
-    <button id="btnShare" hidden>Share .zip</button>
     <label class="chk"><input type="checkbox" id="zipImgs" checked> Include images in .zip</label>
   </div>
   <div class="info" id="saveInfo">
-    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class names and layout is written next to it. firmware-v003 reads the class names from it at boot (older firmware ignores it). NUM_CLASSES, INPUT_SIZE and the filter counts always come from the compiled sketch.</div>
+    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class names and layout is written next to it. firmware-v003 and later read the class names from it at boot (older firmware ignores it). NUM_CLASSES, INPUT_SIZE and the filter counts always come from the compiled sketch.</div>
     <div>Zip mode: Save weights keeps the model for the zip. Save .zip downloads header/myWeights.bin (and images if ticked) in the SD card layout.</div>
   </div>
   <p class="note" id="saveStatus"></p>
@@ -257,6 +257,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   <div class="row">
     <button id="btnSerial" class="primary">Connect</button>
     <span class="note" id="serStatus">Not connected.</span>
+    <label class="chk"><input type="checkbox" id="serDebug" checked> Ask the device for debug frames (firmware-v005)</label>
   </div>
   <textarea id="serOut" class="mono" readonly aria-label="Serial output"></textarea>
   <div class="row">
@@ -264,6 +265,13 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <button id="serSend" disabled>Send</button>
   </div>
   <p class="note">115200 baud, a newline is added to what you send. Close the Arduino IDE serial monitor first. Opening the port can reboot the board, and a reboot may drop the connection: press Connect again. Desktop Chrome or Edge only.</p>
+  <h3>Device view</h3>
+  <p class="note">With the box ticked, firmware-v005 sends its camera JPEG (and a heatmap) every 10th inference, each saved image, and a slow live preview while collecting. Frame lines are shown here instead of in the monitor text. With a model in memory that has the same layout, the page runs the same JPEG through its own copy of the network and compares.</p>
+  <div class="row"><label class="chk"><input type="checkbox" class="heatOverlay" checked> Overlay device heatmap on image</label></div>
+  <div class="cam">
+    <canvas id="devCanvas" width="288" height="288"></canvas>
+    <div style="flex:1;min-width:230px"><div class="info" id="devInfo">No debug frame yet. Connect, keep the box ticked, then run Infer or a collect mode on the device.</div><div id="devBars"></div></div>
+  </div>
 </section>
 
 </main>
@@ -316,7 +324,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 
 <script>
 'use strict';
-const VERSION = 'v003';
+const VERSION = 'v005';
 
 /* ==CORE START== (no DOM use below this line until CORE END) */
 
@@ -804,7 +812,7 @@ function renderSource() {
   if (state.wStatus === 'refused') h += '<div class="bad">Weights: ' + esc(state.wNote) + '</div>';
   else if (state.wStatus === 'loaded' || state.wStatus === 'trained') h += '<div class="ok">Weights: ' + esc(state.wNote || 'model in memory') + '</div>';
   else h += '<div>Weights: no header/myWeights.bin found. Training starts from random He-init, like the device.</div>';
-  h += state.hadConfig ? '<div>config.json found: class order and layout are taken from it. firmware-v003 reads the class names from it at boot; older firmware ignores it.</div>'
+  h += state.hadConfig ? '<div>config.json found: class order and layout are taken from it. firmware-v003 and later read the class names from it at boot; older firmware ignores it.</div>'
                        : '<div>No config.json: class folders are sorted alphabetically. Keep numeric prefixes so this matches myClassLabels[].</div>';
   if (state.skipped) h += '<div class="warn">' + state.skipped + ' files ignored: the firmware only counts .jpg and .JPG.</div>';
   $('sourceInfo').innerHTML = h;
@@ -938,18 +946,22 @@ function heatColor(t) {
   const c = v => Math.max(0, Math.min(1, v));
   return [255 * c(1.5 - Math.abs(4 * t - 3)), 255 * c(1.5 - Math.abs(4 * t - 2)), 255 * c(1.5 - Math.abs(4 * t - 1))];
 }
+function paintHeat(ctx, size, get, side) {   // get(i) -> 0..1 for each cell of a side x side map
+  heatCanvas.width = heatCanvas.height = side;
+  const hc = heatCanvas.getContext('2d'), id = hc.createImageData(side, side);
+  for (let i = 0; i < side * side; i++) { const [r, g, b] = heatColor(get(i)); id.data[i * 4] = r; id.data[i * 4 + 1] = g; id.data[i * 4 + 2] = b; id.data[i * 4 + 3] = 255; }
+  hc.putImageData(id, 0, 0);
+  ctx.save(); ctx.globalAlpha = 0.55; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(heatCanvas, 0, 0, size, size); ctx.restore();
+}
 function drawHeatOn(ctx, size, net, agg) {
-  heatCanvas.width = heatCanvas.height = C2O;
   const c = net.a.c2o, n = C2O * C2O, mp = new Float32Array(n); let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) {
     let m = -Infinity, s = 0;
     for (let f = 0; f < C2F; f++) { const v = c[f * n + i]; if (v > m) m = v; s += v; }
     mp[i] = agg === 'mean' ? s / C2F : m; if (mp[i] < lo) lo = mp[i]; if (mp[i] > hi) hi = mp[i];
   }
-  const hc = heatCanvas.getContext('2d'), id = hc.createImageData(C2O, C2O), span = (hi - lo) || 1;
-  for (let i = 0; i < n; i++) { const [r, g, b] = heatColor((mp[i] - lo) / span); id.data[i * 4] = r; id.data[i * 4 + 1] = g; id.data[i * 4 + 2] = b; id.data[i * 4 + 3] = 255; }
-  hc.putImageData(id, 0, 0);
-  ctx.save(); ctx.globalAlpha = 0.55; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(heatCanvas, 0, 0, size, size); ctx.restore();
+  const span = (hi - lo) || 1;
+  paintHeat(ctx, size, i => (mp[i] - lo) / span, C2O);
 }
 function barsHtml(p) {
   const top = argmax(p);
@@ -1177,7 +1189,7 @@ async function liveLoop() {
 }
 
 // ---------- save ----------
-const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML firmware-v003', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Class names are read by this page and by firmware-v003 at boot. NUM_CLASSES, INPUT_SIZE and filter counts are compile-time in the sketch.' }, null, 2);
+const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML firmware-v005', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Class names are read by this page and by firmware-v003 at boot. NUM_CLASSES, INPUT_SIZE and filter counts are compile-time in the sketch.' }, null, 2);
 
 async function saveWeights() {
   const st = $('saveStatus');
@@ -1210,14 +1222,10 @@ async function buildZip() {
   files.push({ name: 'header/config.json', data: enc.encode(configJson()) });
   return makeZip(files);
 }
-async function saveZip(share) {
+async function saveZip() {
   if (!state.mode) { $('saveStatus').textContent = 'Load a data source first.'; return; }
   $('saveStatus').textContent = 'Building zip ...';
   const blob = await buildZip(), name = 'sd-card-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.zip';
-  if (share) {
-    try { await navigator.share({ files: [new File([blob], name, { type: 'application/zip' })], title: name }); $('saveStatus').textContent = 'Shared ' + name + '.'; } catch (e) { $('saveStatus').textContent = 'Share cancelled or failed: ' + e.message; }
-    return;
-  }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   if (state.mode === 'zip' && hasModel()) state.dirty = false;
@@ -1242,7 +1250,8 @@ function onLayoutChange() {
 }
 
 // ---------- burst capture ----------
-let bursting = false; const BURST_N = 10, BURST_MS = 100;
+let bursting = false; const BURST_N = 10;
+const nextVideoFrame = () => new Promise(r => { const v = $('capVideo'), t = setTimeout(r, 250); if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { clearTimeout(t); r(); }); else { clearTimeout(t); setTimeout(r, 34); } });
 async function burst() {
   if (bursting) return;
   if (!state.mode) { log('Load a data source first (section 1).'); return; }
@@ -1253,15 +1262,17 @@ async function burst() {
   if (state.mode === 'dir') { try { dir = await classDir(ci, true); } catch (e) { log('Cannot open the class folder: ' + e.message); return; } }
   bursting = true;
   const btn = $('btnBurst'), rec = $('rec'), wrap = $('capWrap'), got = []; let last = '';
+  const gap = Math.max(0, parseInt($('burstMs').value) || 0);
   btn.classList.add('recording'); rec.classList.add('on');
   try {
     for (let i = 0; i < BURST_N; i++) {
-      const t0 = performance.now(); btn.textContent = '\u25CF ' + (i + 1) + '/' + BURST_N;
+      btn.textContent = '\u25CF ' + (i + 1) + '/' + BURST_N;
+      await nextVideoFrame();
       if (!grabFrame()) break;
       wrap.classList.add('flash'); setTimeout(() => wrap.classList.remove('flash'), 60);
       let name = 'img_' + Date.now() + '.jpg'; if (name === last) name = 'img_' + (Date.now() + 1) + '.jpg'; last = name;
       got.push({ name, blob: await frameBlob() });
-      const wait = BURST_MS - (performance.now() - t0); if (wait > 0) await sleep(wait);
+      if (gap > 0) await sleep(gap);
     }
   } finally { rec.classList.remove('on'); btn.classList.remove('recording'); btn.textContent = 'Saving ...'; }
   let saved = 0;
@@ -1362,6 +1373,8 @@ function serUi(on) {
 }
 async function serDisconnect() {
   const p = ser.port; if (!p) return; ser.port = null;
+  clearInterval(serBeat); serBeat = null; serPend = '';
+  try { await ser.writer.write('d'); } catch (e) { /* port already gone */ }
   try { await ser.reader.cancel(); } catch (e) { /* already closed */ }
   try { await ser.writer.close(); } catch (e) { /* already closed */ }
   try { await ser.readDone; await ser.writeDone; } catch (e) { /* ignore */ }
@@ -1377,14 +1390,71 @@ async function serConnect() {
   const dec = new TextDecoderStream(); ser.readDone = port.readable.pipeTo(dec.writable).catch(() => {}); ser.reader = dec.readable.getReader();
   const enc = new TextEncoderStream(); ser.writeDone = enc.readable.pipeTo(port.writable).catch(() => {}); ser.writer = enc.writable.getWriter();
   serUi(true); log('Serial connected.');
+  serDebugSync(); serBeat = setInterval(serDebugSync, 5000);
   const rd = ser.reader;
-  (async () => { try { for (;;) { const { value, done } = await rd.read(); if (done) break; if (value) serAppend(value); } } catch (e) { /* closed */ } if (ser.port === port) serDisconnect(); })();
+  (async () => { try { for (;;) { const { value, done } = await rd.read(); if (done) break; if (value) serFeed(value); } } catch (e) { /* closed */ } if (ser.port === port) serDisconnect(); })();
 }
 async function serSend() {
   if (!ser.writer) return;
   const t = $('serIn').value;
   try { await ser.writer.write(t + '\n'); serAppend('> ' + t + '\n'); } catch (e) { log('Serial send failed: ' + e.message); }
   $('serIn').value = ''; $('serIn').focus();
+}
+
+// ---------- device debug frames (firmware-v005) ----------
+let serPend = '', serBeat = null;
+const dev = { f: null, tok: 0 };
+function serDebugSync() { if (ser.writer) ser.writer.write($('serDebug').checked ? 'D' : 'd').catch(() => {}); }
+const b64ToBytes = s => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+// Text goes to the monitor; complete lines that start with '@' are debug frames.
+function serFeed(chunk) {
+  serPend += chunk;
+  let i;
+  while ((i = serPend.indexOf('\n')) >= 0) {
+    const line = serPend.slice(0, i); serPend = serPend.slice(i + 1);
+    if (line.charCodeAt(0) === 64) serFrame(line.trim()); else serAppend(line.replace(/\r$/, '') + '\n');
+  }
+  if (serPend && serPend.charCodeAt(0) !== 64) { serAppend(serPend); serPend = ''; }
+}
+function serFrame(line) {
+  const f = line.split(' ');
+  if (f[0] !== '@F' || f.length < 11) { serAppend('[incomplete debug frame ignored]\n'); return; }
+  try {
+    const nums = s => s === '-' ? null : s.split(',').map(Number);
+    const fr = { kind: f[1], n: f[2], pred: parseInt(f[3]), probs: nums(f[4]), logits: nums(f[5]), layout: f[6], ctr: nums(f[7]), side: parseInt(f[8]), heat: f[9] === '-' ? null : b64ToBytes(f[9]), jpg: b64ToBytes(f[10]) };
+    fr.blob = new Blob([fr.jpg], { type: 'image/jpeg' });
+    if (dev.f) URL.revokeObjectURL(dev.f.url);
+    fr.url = URL.createObjectURL(fr.blob); dev.f = fr; renderDev();
+  } catch (e) { serAppend('[debug frame error: ' + e.message + ']\n'); }
+}
+async function renderDev() {
+  const fr = dev.f; if (!fr) return;
+  const tok = ++dev.tok, cv = $('devCanvas'), ctx = cv.getContext('2d');
+  const img = await loadImg(fr.url); if (tok !== dev.tok) return;
+  ctx.imageSmoothingEnabled = false; ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(img, 0, 0, cv.width, cv.height);
+  if (fr.heat && heat.overlay && fr.heat.length === fr.side * fr.side) paintHeat(ctx, cv.width, i => fr.heat[i] / 255, fr.side);
+  const label = { I: 'inference frame', C: 'image just saved', P: 'live preview while collecting' }[fr.kind] || fr.kind;
+  let h = '<div><b>Device ' + label + '</b> #' + esc(fr.n) + ', layout ' + esc(fr.layout) + ', JPEG ' + fr.jpg.length + ' bytes</div>', bars = '';
+  if (fr.probs) {
+    const top = argmax(fr.probs), name = i => state.classes[i] !== undefined && fr.probs.length === state.classes.length ? state.classes[i] : 'class ' + i;
+    h += '<div>Device says <b>' + esc(name(top)) + ' ' + (fr.probs[top] * 100).toFixed(1) + '%</b></div>';
+    if (fr.probs.length === state.classes.length) bars = barsHtml(fr.probs);
+    if (!hasModel()) h += '<div class="note">No model in memory, so nothing to compare with. Train or load weights.</div>';
+    else if (fr.layout !== layoutKey() || fr.probs.length !== state.classes.length) h += '<div class="warn">Device layout ' + esc(fr.layout) + ' with ' + fr.probs.length + ' classes differs from this page (' + esc(layoutKey()) + ', ' + state.classes.length + ' classes). No comparison.</div>';
+    else {
+      const x = rgbaToInput(await decodeBlob(fr.blob)); if (tok !== dev.tok) return;
+      forward(state.net, x); const p = state.net.a.probs, bt = argmax(p);
+      let md = 0; for (let i = 0; i < p.length; i++) md = Math.max(md, Math.abs(p[i] - fr.probs[i]) * 100);
+      h += '<div>Page model on the same JPEG says <b>' + esc(state.classes[bt]) + ' ' + (p[bt] * 100).toFixed(1) + '%</b>. Largest probability difference <b class="' + (md < 1 ? 'ok' : md < 5 ? 'warn' : 'bad') + '">' + md.toFixed(2) + ' points</b>.</div>';
+      const c0 = ((IN / 2) * IN + IN / 2) * 3;
+      if (fr.ctr) {
+        const dc = Math.max(Math.abs(x[c0] - fr.ctr[0]), Math.abs(x[c0 + 1] - fr.ctr[1]), Math.abs(x[c0 + 2] - fr.ctr[2]));
+        h += '<div>Centre input pixel: device ' + fr.ctr.map(v => v.toFixed(3)).join(' ') + ', page ' + [x[c0], x[c0 + 1], x[c0 + 2]].map(v => v.toFixed(3)).join(' ') + '.</div>';
+        if (md >= 5) h += '<div class="' + (dc > 0.03 ? 'bad' : 'warn') + '">' + (dc > 0.03 ? 'The model inputs differ: check flip, resize or JPEG decode.' : 'Inputs match, so the weights on the device are probably not the ones in this page (old myWeights.bin, or a different class order).') + '</div>';
+      }
+    }
+  }
+  $('devInfo').innerHTML = h; $('devBars').innerHTML = bars;
 }
 
 // ---------- wiring ----------
@@ -1402,15 +1472,14 @@ $('btnEval').onclick = runEval;
 $('btnParity').onclick = () => parity();
 $('btnLive').onclick = toggleLive;
 $('btnSaveW').onclick = saveWeights;
-$('btnSaveZip').onclick = () => saveZip(false);
-$('btnShare').onclick = () => saveZip(true);
+$('btnSaveZip').onclick = saveZip;
 $('inspClose').onclick = () => $('insp').close();
 $('inspDelete').onclick = () => state.insp && deleteSample(state.insp);
 $('inspMoveBtn').onclick = () => state.insp && moveSample(state.insp, parseInt($('inspMove').value));
 $('inspParity').onclick = () => parity(state.insp);
 $('insp').addEventListener('close', () => { /* keep state.insp for the parity button */ });
-document.querySelectorAll('.heatAgg').forEach(e => e.onchange = () => { heat.agg = e.value; syncHeatControls(); drawInsp(); });
-document.querySelectorAll('.heatOverlay').forEach(e => e.onchange = () => { heat.overlay = e.checked; syncHeatControls(); drawInsp(); });
+document.querySelectorAll('.heatAgg').forEach(e => e.onchange = () => { heat.agg = e.value; syncHeatControls(); drawInsp(); renderDev(); });
+document.querySelectorAll('.heatOverlay').forEach(e => e.onchange = () => { heat.overlay = e.checked; syncHeatControls(); drawInsp(); renderDev(); });
 $('valMode').onchange = () => {
   const fw = $('valMode').value === 'fw';
   $('valAmtLabel').textContent = fw ? 'Images per class held out' : '% of smallest class held out';
@@ -1443,6 +1512,7 @@ $('rev').addEventListener('keydown', e => {
 });
 $('btnSaveCfg').onclick = saveConfig;
 $('btnSerial').onclick = serConnect;
+$('serDebug').onchange = serDebugSync;
 $('serSend').onclick = serSend;
 $('serIn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); serSend(); } };
 if ('serial' in navigator) navigator.serial.addEventListener('disconnect', e => { if (e.target === ser.port) serDisconnect(); });
@@ -1453,7 +1523,6 @@ if (!window.showDirectoryPicker) {
   $('btnDir').disabled = true; $('btnDir').classList.remove('primary'); $('btnZip').classList.add('primary');
   $('dirNote').textContent = 'This browser has no folder picker (phones, Safari, Firefox). Use Load .zip, then Save .zip. Desktop Chrome or Edge can work directly on the SD card.';
 } else $('dirNote').textContent = 'Desktop Chrome or Edge: pick the SD card root and changes are written straight to the card. Other browsers: use .zip.';
-if (navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'])], 'x.zip', { type: 'application/zip' })] })) $('btnShare').hidden = false;
 
 syncHeatControls(); syncLayoutControls(); renderAll();
 log('Vision CNN SD trainer ' + VERSION + ' ready. Layout ' + IN + 'x' + IN + 'x3, conv filters ' + C1F + '/' + C2F + ', ' + FLAT + ' flattened.');
