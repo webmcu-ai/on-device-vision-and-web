@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  webMCU-AI  |  Vision CNN SD trainer  |  v002
+  webMCU-AI  |  Vision CNN SD trainer  |  v003
   Companion page for the XIAO ESP32-S3 "FULL VISION ML v44" firmware.
   Reads images/<class>/*.jpg from the SD card, trains the same CNN (input size and filters selectable) in plain JS,
   analyzes the dataset, and writes header/myWeights.bin back for the device to load.
@@ -10,7 +10,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vision CNN SD trainer v002</title>
+<title>Vision CNN SD trainer v003</title>
 <style>
 :root{--bg:#11151b;--panel:#182029;--panel2:#1f2a36;--line:#2c3947;--text:#dde5ee;--mut:#8b9aac;--acc:#66d1bd;--acc-ink:#062a24;--bad:#ef6b73;--warn:#e9b44c;--ok:#7bd88f;--r:8px}
 *{box-sizing:border-box}
@@ -73,7 +73,7 @@ dialog::backdrop{background:rgba(0,0,0,.65)}
 .inspBody{display:flex;flex-wrap:wrap;gap:16px}
 .inspBody canvas{width:min(400px,86vw);height:auto;aspect-ratio:1;border-radius:6px;border:1px solid var(--line);background:#000}
 .inspSide{flex:1;min-width:250px}
-textarea#console{width:100%;height:220px;background:#0b0e13;border:1px solid var(--line);border-radius:6px;padding:10px;font:12.5px/1.45 ui-monospace,Consolas,monospace;resize:vertical}
+textarea.mono,textarea#console{width:100%;height:220px;background:#0b0e13;border:1px solid var(--line);border-radius:6px;padding:10px;font:12.5px/1.45 ui-monospace,Consolas,monospace;resize:vertical}
 .vwrap{position:relative;width:288px;height:288px}
 .vwrap video{width:100%;height:100%}
 .vwrap.flash video{outline:4px solid var(--bad);outline-offset:-4px}
@@ -91,8 +91,8 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 </head>
 <body>
 <header>
-  <h1>Vision CNN SD trainer<span class="ver">v002</span></h1>
-  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44 or firmware-v002): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
+  <h1>Vision CNN SD trainer<span class="ver">v003</span></h1>
+  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44, or firmware-v003 for config.json class names): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
   <p>Everything runs in this page. Images and weights never leave your computer.</p>
 </header>
 <main>
@@ -117,7 +117,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <input type="text" id="newClass" placeholder="New class, e.g. 3Book" aria-label="New class name">
     <button id="btnAddClass">Add class</button>
   </div>
-  <p class="note">The device knows the layout and classes only from the sketch. Make these lines match exactly (same order of classes, keep numeric prefixes). firmware-v002 refuses a weights file whose size does not match:</p>
+  <p class="note">The sketch must be compiled with these values (firmware-v002 and later refuse a weights file of the wrong size). firmware-v003 also reads the class names from header/config.json at boot, but their count must equal NUM_CLASSES, so adding or removing a class means editing NUM_CLASSES and reflashing:</p>
   <pre id="fwLines">(no classes yet)</pre>
 
   <h3>Add images from the webcam</h3>
@@ -130,7 +130,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
         <button id="btnCapture" class="primary">Capture (Space)</button>
         <button id="btnBurst" class="burst">Burst 10 (B)</button>
       </div>
-      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). firmware-v002 also flips vertically, so device and page images match.</label>
+      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). firmware-v002 and later also flip vertically, so device and page images match.</label>
       <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip. Burst takes 10 frames about 0.1 s apart while the button is red, then saves them. Burst frames are near-duplicates, so move or tilt the object between bursts.</p>
     </div>
   </div>
@@ -233,12 +233,13 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   <h2>6 Save</h2>
   <div class="row">
     <button id="btnSaveW" class="primary">Save weights to header/myWeights.bin</button>
+    <button id="btnSaveCfg">Write config.json only</button>
     <button id="btnSaveZip">Save .zip</button>
     <button id="btnShare" hidden>Share .zip</button>
     <label class="chk"><input type="checkbox" id="zipImgs" checked> Include images in .zip</label>
   </div>
   <div class="info" id="saveInfo">
-    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class order is written next to it for this page. The firmware ignores config.json.</div>
+    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class names and layout is written next to it. firmware-v003 reads the class names from it at boot (older firmware ignores it). NUM_CLASSES, INPUT_SIZE and the filter counts always come from the compiled sketch.</div>
     <div>Zip mode: Save weights keeps the model for the zip. Save .zip downloads header/myWeights.bin (and images if ticked) in the SD card layout.</div>
   </div>
   <p class="note" id="saveStatus"></p>
@@ -248,6 +249,21 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 <section id="s-console">
   <h2>7 Console</h2>
   <textarea id="console" readonly aria-label="Console log"></textarea>
+</section>
+
+<!-- ============ 8 SERIAL MONITOR ============ -->
+<section id="s-serial">
+  <h2>8 Serial monitor</h2>
+  <div class="row">
+    <button id="btnSerial" class="primary">Connect</button>
+    <span class="note" id="serStatus">Not connected.</span>
+  </div>
+  <textarea id="serOut" class="mono" readonly aria-label="Serial output"></textarea>
+  <div class="row">
+    <input type="text" id="serIn" placeholder="Text to send, e.g. t, l or 1" aria-label="Text to send" disabled style="flex:1;min-width:200px">
+    <button id="serSend" disabled>Send</button>
+  </div>
+  <p class="note">115200 baud, a newline is added to what you send. Close the Arduino IDE serial monitor first. Opening the port can reboot the board, and a reboot may drop the connection: press Connect again. Desktop Chrome or Edge only.</p>
 </section>
 
 </main>
@@ -300,7 +316,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 
 <script>
 'use strict';
-const VERSION = 'v002';
+const VERSION = 'v003';
 
 /* ==CORE START== (no DOM use below this line until CORE END) */
 
@@ -788,7 +804,7 @@ function renderSource() {
   if (state.wStatus === 'refused') h += '<div class="bad">Weights: ' + esc(state.wNote) + '</div>';
   else if (state.wStatus === 'loaded' || state.wStatus === 'trained') h += '<div class="ok">Weights: ' + esc(state.wNote || 'model in memory') + '</div>';
   else h += '<div>Weights: no header/myWeights.bin found. Training starts from random He-init, like the device.</div>';
-  h += state.hadConfig ? '<div>config.json found: used for class order. The v44 firmware ignores it.</div>'
+  h += state.hadConfig ? '<div>config.json found: class order and layout are taken from it. firmware-v003 reads the class names from it at boot; older firmware ignores it.</div>'
                        : '<div>No config.json: class folders are sorted alphabetically. Keep numeric prefixes so this matches myClassLabels[].</div>';
   if (state.skipped) h += '<div class="warn">' + state.skipped + ' files ignored: the firmware only counts .jpg and .JPG.</div>';
   $('sourceInfo').innerHTML = h;
@@ -1161,7 +1177,7 @@ async function liveLoop() {
 }
 
 // ---------- save ----------
-const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML v44 / firmware-v002', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Read by the browser page for class order only. The device firmware does not read this file.' }, null, 2);
+const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML firmware-v003', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Class names are read by this page and by firmware-v003 at boot. NUM_CLASSES, INPUT_SIZE and filter counts are compile-time in the sketch.' }, null, 2);
 
 async function saveWeights() {
   const st = $('saveStatus');
@@ -1319,6 +1335,58 @@ async function deleteMarked() {
   renderSource(); renderClasses(); renderBrowser(); updateSplitInfo(); renderEval(); revClassOptions(); await buildRev(rev.i);
 }
 
+// ---------- config.json only ----------
+async function saveConfig() {
+  const st = $('saveStatus');
+  if (!state.classes.length) { st.textContent = 'No classes to write.'; return; }
+  if (state.mode !== 'dir') { st.textContent = 'Zip mode: config.json is included in Save .zip.'; return; }
+  try {
+    const hd = await state.root.getDirectoryHandle('header', { create: true });
+    await writeFile(hd, 'config.json', new Blob([configJson()]));
+    st.textContent = 'Wrote header/config.json with ' + state.classes.length + ' classes: ' + state.classes.join(', ') + '.';
+  } catch (e) { st.textContent = 'Write failed: ' + e.message; }
+  log(st.textContent);
+}
+
+// ---------- serial monitor (Web Serial) ----------
+const ser = { port: null, reader: null, writer: null, readDone: null, writeDone: null };
+function serAppend(t) {
+  const o = $('serOut'); o.value += t.replace(/\r/g, '');
+  if (o.value.length > 60000) o.value = o.value.slice(-40000);
+  o.scrollTop = o.scrollHeight;
+}
+function serUi(on) {
+  $('btnSerial').textContent = on ? 'Disconnect' : 'Connect';
+  $('serSend').disabled = !on; $('serIn').disabled = !on;
+  $('serStatus').textContent = on ? 'Connected at 115200 baud.' : 'Not connected.';
+}
+async function serDisconnect() {
+  const p = ser.port; if (!p) return; ser.port = null;
+  try { await ser.reader.cancel(); } catch (e) { /* already closed */ }
+  try { await ser.writer.close(); } catch (e) { /* already closed */ }
+  try { await ser.readDone; await ser.writeDone; } catch (e) { /* ignore */ }
+  try { await p.close(); } catch (e) { /* ignore */ }
+  ser.reader = ser.writer = null; serUi(false); log('Serial disconnected.');
+}
+async function serConnect() {
+  if (ser.port) { await serDisconnect(); return; }
+  let port;
+  try { port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200 }); }
+  catch (e) { if (e.name !== 'NotFoundError') log('Serial: ' + e.message); return; }
+  ser.port = port;
+  const dec = new TextDecoderStream(); ser.readDone = port.readable.pipeTo(dec.writable).catch(() => {}); ser.reader = dec.readable.getReader();
+  const enc = new TextEncoderStream(); ser.writeDone = enc.readable.pipeTo(port.writable).catch(() => {}); ser.writer = enc.writable.getWriter();
+  serUi(true); log('Serial connected.');
+  const rd = ser.reader;
+  (async () => { try { for (;;) { const { value, done } = await rd.read(); if (done) break; if (value) serAppend(value); } } catch (e) { /* closed */ } if (ser.port === port) serDisconnect(); })();
+}
+async function serSend() {
+  if (!ser.writer) return;
+  const t = $('serIn').value;
+  try { await ser.writer.write(t + '\n'); serAppend('> ' + t + '\n'); } catch (e) { log('Serial send failed: ' + e.message); }
+  $('serIn').value = ''; $('serIn').focus();
+}
+
 // ---------- wiring ----------
 $('btnDir').onclick = pickDir;
 $('btnZip').onclick = () => $('zipFile').click();
@@ -1373,6 +1441,12 @@ $('rev').addEventListener('keydown', e => {
   else if (e.key === 'ArrowRight') { e.preventDefault(); revMove(1); }
   else if (e.key === 'x' || e.key === 'X' || e.key === 'Delete') { e.preventDefault(); revToggle(); }
 });
+$('btnSaveCfg').onclick = saveConfig;
+$('btnSerial').onclick = serConnect;
+$('serSend').onclick = serSend;
+$('serIn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); serSend(); } };
+if ('serial' in navigator) navigator.serial.addEventListener('disconnect', e => { if (e.target === ser.port) serDisconnect(); });
+else { $('btnSerial').disabled = true; $('btnSerial').classList.remove('primary'); $('serStatus').textContent = 'Web Serial is not available in this browser. Use desktop Chrome or Edge.'; }
 window.addEventListener('beforeunload', e => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
 if (!window.showDirectoryPicker) {
