@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <!--
-  webMCU-AI  |  Vision CNN SD trainer  |  v001
+  webMCU-AI  |  Vision CNN SD trainer  |  v002
   Companion page for the XIAO ESP32-S3 "FULL VISION ML v44" firmware.
-  Reads images/<class>/*.jpg from the SD card, trains the same 64x64 CNN in plain JS,
+  Reads images/<class>/*.jpg from the SD card, trains the same CNN (input size and filters selectable) in plain JS,
   analyzes the dataset, and writes header/myWeights.bin back for the device to load.
   No external libraries. No network. MIT license. Use at your own risk.
 -->
@@ -10,7 +10,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vision CNN SD trainer v001</title>
+<title>Vision CNN SD trainer v002</title>
 <style>
 :root{--bg:#11151b;--panel:#182029;--panel2:#1f2a36;--line:#2c3947;--text:#dde5ee;--mut:#8b9aac;--acc:#66d1bd;--acc-ink:#062a24;--bad:#ef6b73;--warn:#e9b44c;--ok:#7bd88f;--r:8px}
 *{box-sizing:border-box}
@@ -74,13 +74,25 @@ dialog::backdrop{background:rgba(0,0,0,.65)}
 .inspBody canvas{width:min(400px,86vw);height:auto;aspect-ratio:1;border-radius:6px;border:1px solid var(--line);background:#000}
 .inspSide{flex:1;min-width:250px}
 textarea#console{width:100%;height:220px;background:#0b0e13;border:1px solid var(--line);border-radius:6px;padding:10px;font:12.5px/1.45 ui-monospace,Consolas,monospace;resize:vertical}
+.vwrap{position:relative;width:288px;height:288px}
+.vwrap video{width:100%;height:100%}
+.vwrap.flash video{outline:4px solid var(--bad);outline-offset:-4px}
+.rec{display:none;position:absolute;top:10px;right:10px;background:var(--bad);color:#fff;font-weight:700;font-size:13px;padding:2px 10px;border-radius:12px}
+.rec.on{display:block}
+button.burst{background:#2a1a1d;border-color:var(--bad);color:#ffb3b8}
+button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);font-weight:700}
+.revframe{position:relative;width:min(400px,86vw);aspect-ratio:1;border:3px solid var(--line);border-radius:6px;overflow:hidden;background:#000}
+.revframe img{width:100%;height:100%;object-fit:cover;display:block}
+.revframe.marked{border-color:var(--bad)}
+.revtag{display:none;position:absolute;top:8px;left:8px;background:var(--bad);color:#fff;padding:2px 8px;border-radius:4px;font-weight:600;font-size:13px}
+.revframe.marked .revtag{display:block}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
 <header>
-  <h1>Vision CNN SD trainer<span class="ver">v001</span></h1>
-  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML v44 firmware: load the SD card, add images, train the same 64x64 CNN, clean the dataset, then write myWeights.bin back to the card.</p>
+  <h1>Vision CNN SD trainer<span class="ver">v002</span></h1>
+  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44 or firmware-v002): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
   <p>Everything runs in this page. Images and weights never leave your computer.</p>
 </header>
 <main>
@@ -105,31 +117,43 @@ textarea#console{width:100%;height:220px;background:#0b0e13;border:1px solid var
     <input type="text" id="newClass" placeholder="New class, e.g. 3Book" aria-label="New class name">
     <button id="btnAddClass">Add class</button>
   </div>
-  <p class="note">The device knows classes only from <b>myClassLabels[]</b> in the sketch. Keep the numeric prefixes and make the sketch match this list exactly, in this order:</p>
+  <p class="note">The device knows the layout and classes only from the sketch. Make these lines match exactly (same order of classes, keep numeric prefixes). firmware-v002 refuses a weights file whose size does not match:</p>
   <pre id="fwLines">(no classes yet)</pre>
 
   <h3>Add images from the webcam</h3>
   <div class="cam">
-    <video id="capVideo" class="mir" playsinline muted></video>
+    <div class="vwrap" id="capWrap"><video id="capVideo" class="mir" playsinline muted></video><span id="rec" class="rec">● REC</span></div>
     <div style="flex:1;min-width:230px">
       <div class="row"><button id="btnCam">Start camera</button></div>
       <div class="row">
         <select id="capClass" aria-label="Class to capture into"></select>
         <button id="btnCapture" class="primary">Capture (Space)</button>
+        <button id="btnBurst" class="burst">Burst 10 (B)</button>
       </div>
-      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames like the device (firmware: hmirror on, no vflip)</label>
-      <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip.</p>
+      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). firmware-v002 also flips vertically, so device and page images match.</label>
+      <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip. Burst takes 10 frames about 0.1 s apart while the button is red, then saves them. Burst frames are near-duplicates, so move or tilt the object between bursts.</p>
     </div>
   </div>
 
   <h3>Sample browser</h3>
-  <p class="note">Open a class, click an image to see it large with its heatmap, delete it, or move it to another class.</p>
+  <div class="row"><button id="btnReview" class="primary">Review images</button></div>
+  <p class="note">Review steps through one class at a time: mark bad images, then delete them all with one confirmation. Or open a class below and click an image to see its heatmap, delete it, or move it.</p>
   <div id="browser"></div>
 </section>
 
 <!-- ============ 3 TRAIN ============ -->
 <section id="s-train">
   <h2>3 Train</h2>
+  <h3 style="margin-top:0">Model layout</h3>
+  <div class="grid">
+    <label>Input size (square, even)
+      <select id="inSize"><option value="24">24 x 24</option><option value="32">32 x 32</option><option value="40">40 x 40</option><option value="48">48 x 48</option><option value="64">64 x 64</option><option value="80">80 x 80</option><option value="96">96 x 96</option><option value="128">128 x 128</option></select>
+    </label>
+    <label>Conv1 filters (1-16)<input type="number" id="c1f" value="4" step="1" min="1" max="16"></label>
+    <label>Conv2 filters (1-32)<input type="number" id="c2f" value="8" step="1" min="1" max="32"></label>
+  </div>
+  <p class="note">These are compile-time settings in the sketch (INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS). Copy the lines from section 2 into the sketch after changing them. The 3x3 kernel is fixed in the firmware loops. Images on the card stay 240x240, so changing the size needs no new photos, only a retrain. Cost grows with the square of the input size. Changing the layout discards the model in memory.</p>
+  <h3>Training settings</h3>
   <div class="grid">
     <label>Learning rate<input type="number" id="lr" value="0.0003" step="0.0001" min="0.000001"></label>
     <label>Batch size<input type="number" id="batch" value="6" step="1" min="1"></label>
@@ -242,25 +266,63 @@ textarea#console{width:100%;height:220px;background:#0b0e13;border:1px solid var
         <select class="heatAgg" aria-label="Heatmap aggregation"><option value="max">Heatmap: max over filters</option><option value="mean">Heatmap: mean over filters</option></select>
       </div>
       <label class="chk"><input type="checkbox" class="heatOverlay" checked> Overlay heatmap on image</label>
-      <p class="note">Heatmap: last conv layer, blue = low, red = high. Position is approximate (29x29 map stretched over the image).</p>
+      <p class="note">Heatmap: last conv layer, blue = low, red = high. Position is approximate (the last conv map is stretched over the image).</p>
       <div class="row"><select id="inspMove" aria-label="Move to class"></select><button id="inspMoveBtn">Move</button></div>
       <div class="row"><button id="inspParity">Print parity line</button><button id="inspDelete" class="danger">Delete image</button></div>
     </div>
   </div>
 </dialog>
 
+<!-- Review -->
+<dialog id="rev">
+  <div class="row" style="justify-content:space-between;margin-top:0">
+    <strong>Review images</strong>
+    <button id="revClose">Close</button>
+  </div>
+  <div class="row">
+    <select id="revClass" aria-label="Class to review"></select>
+    <label class="chk"><input type="checkbox" id="revSusp"> Suspicious first (needs a model)</label>
+  </div>
+  <div class="inspBody">
+    <div>
+      <div class="revframe" id="revFrame"><img id="revImg" alt=""><span class="revtag">MARKED BAD</span></div>
+      <p class="note" id="revCount"></p>
+    </div>
+    <div class="inspSide">
+      <div id="revPred" class="info">-</div>
+      <div class="row"><button id="revPrev">Previous (←)</button><button id="revNext">Next (→)</button></div>
+      <div class="row"><button id="revMark" class="danger">Mark bad (X)</button><button id="revNextClass">Next class</button></div>
+      <div class="row"><button id="revDelete" class="danger">Delete marked (0)</button><button id="revClear">Clear marks</button></div>
+      <p class="note">Marking deletes nothing. Delete marked asks once, then removes every marked image. Keys: arrows to move, X to mark and advance.</p>
+    </div>
+  </div>
+</dialog>
+
 <script>
 'use strict';
-const VERSION = 'v001';
+const VERSION = 'v002';
 
 /* ==CORE START== (no DOM use below this line until CORE END) */
 
 // ---- Architecture constants, copied from the firmware ----
-const IN = 64, SRC = 240;                       // INPUT_SIZE, camera frame size
-const C1F = 4, C2F = 8;                          // CONV1_FILTERS, CONV2_FILTERS
-const C1O = IN - 2, P1O = C1O / 2, C2O = P1O - 2; // 62, 31, 29
-const C1W = 3 * 3 * 3 * C1F, C2W = 3 * 3 * C1F * C2F; // 108, 288
-const FLAT = C2O * C2O * C2F;                    // 6728
+// Layout is variable (compile-time in the firmware): INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS. Kernel is fixed at 3x3.
+const SRC = 240;                                 // camera frame size
+let IN = 64, C1F = 4, C2F = 8, C1O, P1O, C2O, C1W, C2W, FLAT, LUT = null;
+function buildLUT() { const t = new Int32Array(IN); for (let i = 0; i < IN; i++) t[i] = Math.min(Math.floor((i + 0.5) * SRC / IN), SRC - 1); return t; }
+function setLayout(i, a, b) {
+  IN = i; C1F = a; C2F = b; C1O = IN - 2; P1O = C1O / 2; C2O = P1O - 2;
+  C1W = 27 * C1F; C2W = 9 * C1F * C2F; FLAT = C2O * C2O * C2F; LUT = buildLUT();
+}
+const layoutKey = () => IN + 'x' + C1F + 'x' + C2F;
+const layoutValid = (i, a, b) => Number.isInteger(i) && Number.isInteger(a) && Number.isInteger(b) && i >= 16 && i <= 128 && i % 2 === 0 && a >= 1 && a <= 16 && b >= 1 && b <= 32;
+// All layouts whose weight file would be exactly `bytes` long for N classes (used to explain or infer a mismatch).
+function findLayouts(bytes, N) {
+  const out = [];
+  for (let i = 16; i <= 128; i += 2) { const c2o = (i - 2) / 2 - 2;
+    for (let a = 1; a <= 16; a++) for (let b = 1; b <= 32; b++)
+      if ((27 * a + a + 9 * a * b + b + c2o * c2o * b * N + N) * 4 === bytes) out.push([i, a, b]); }
+  return out;
+}
 const PARAM_ORDER = ['c1w', 'c1b', 'c2w', 'c2b', 'ow', 'ob']; // file write order in mySaveWeights()
 const paramSizes = N => ({ c1w: C1W, c1b: C1F, c2w: C2W, c2b: C2F, ow: FLAT * N, ob: N });
 const totalFloats = N => C1W + C1F + C2W + C2F + FLAT * N + N;
@@ -279,12 +341,12 @@ function zerosFor(N) { const s = paramSizes(N), o = {}; for (const k of PARAM_OR
 function heInit(net) {
   const w = net.w, fill = (a, std) => { for (let i = 0; i < a.length; i++) a[i] = (Math.random() - 0.5) * 2 * std; };
   fill(w.c1w, Math.sqrt(2 / (9 * 3))); w.c1b.fill(0);
-  fill(w.c2w, Math.sqrt(2 / 36));      w.c2b.fill(0);
+  fill(w.c2w, Math.sqrt(2 / (C1F * 9)));      w.c2b.fill(0);
   fill(w.ow, Math.sqrt(2 / FLAT));     w.ob.fill(0);
 }
 
 function makeNet(N) {
-  const net = { N, w: zerosFor(N), g: zerosFor(N), m: zerosFor(N), v: zerosFor(N), a: {
+  const net = { N, key: layoutKey(), w: zerosFor(N), g: zerosFor(N), m: zerosFor(N), v: zerosFor(N), a: {
     c1o: new Float32Array(C1F * C1O * C1O), p1o: new Float32Array(C1F * P1O * P1O), c2o: new Float32Array(FLAT),
     logits: new Float32Array(N), probs: new Float32Array(N), din: null, dinBuf: null,
     dg: new Float32Array(FLAT), c2g: new Float32Array(FLAT),
@@ -322,7 +384,7 @@ function forward(net, inp, mask) {
       for (let c = 0; c < C1F; c++) {
         const ib = c * P1O * P1O;
         for (let ky = 0; ky < 3; ky++) for (let kx = 0; kx < 3; kx++)
-          s += p1o[ib + (y + ky) * P1O + (xx + kx)] * w.c2w[f * 36 + c * 9 + ky * 3 + kx];
+          s += p1o[ib + (y + ky) * P1O + (xx + kx)] * w.c2w[f * 9 * C1F + c * 9 + ky * 3 + kx];
       }
       c2o[o + y * C2O + xx] = lrelu(clipv(s + b));
     }
@@ -360,7 +422,7 @@ function backward(net, inp, label, mask) {
       for (let c = 0; c < C1F; c++) {
         const ib = c * P1O * P1O;
         for (let ky = 0; ky < 3; ky++) for (let kx = 0; kx < 3; kx++) {
-          const pi = ib + (y + ky) * P1O + (xx + kx), wi = f * 36 + c * 9 + ky * 3 + kx;
+          const pi = ib + (y + ky) * P1O + (xx + kx), wi = f * 9 * C1F + c * 9 + ky * 3 + kx;
           g.c2w[wi] += gr * p1o[pi]; p1g[pi] += gr * w.c2w[wi];
         }
       }
@@ -423,7 +485,6 @@ function parseWeights(net, buf) {
 }
 
 // RGBA (240x240) -> HWC RGB floats 0..1 with the firmware's nearest-pixel sampling.
-const LUT = (() => { const t = new Int32Array(IN); for (let i = 0; i < IN; i++) t[i] = Math.min(Math.floor((i + 0.5) * SRC / IN), SRC - 1); return t; })();
 function rgbaToInput(d) {
   const out = new Float32Array(IN * IN * 3);
   for (let y = 0; y < IN; y++) for (let x = 0; x < IN; x++) {
@@ -563,6 +624,7 @@ async function parseZip(buf) {
   }
   return out;
 }
+setLayout(64, 4, 8);
 /* ==CORE END== */
 
 
@@ -577,7 +639,7 @@ const state = {
   mode: null, root: null, srcName: '', classes: [], samples: [], skipped: 0,
   net: null, wStatus: 'none', wNote: '', dirty: false, hadConfig: false, zipHadWeights: false,
   stream: null, live: false, insp: null, wrong: [], cm: null, evalStale: false, evalCount: 0,
-  openCls: new Set(), training: false, stop: false, pause: false, hist: { loss: [], tacc: [], vacc: [] }, epochsPlanned: 20
+  openCls: new Set(), marks: new Set(), training: false, stop: false, pause: false, hist: { loss: [], tacc: [], vacc: [] }, epochsPlanned: 20
 };
 const heat = { agg: 'max', overlay: true };
 const pathOf = s => '/images/' + state.classes[s.cls] + '/' + s.name;
@@ -609,12 +671,12 @@ function addSample(cls, name, blob) { const s = { cls, name, blob, url: URL.crea
 function counts() { const c = new Array(state.classes.length).fill(0); for (const s of state.samples) c[s.cls]++; return c; }
 function clearData() {
   for (const s of state.samples) URL.revokeObjectURL(s.url);
-  Object.assign(state, { samples: [], classes: [], net: null, wStatus: 'none', wNote: '', dirty: false, hadConfig: false, zipHadWeights: false, skipped: 0, wrong: [], cm: null, evalStale: false, insp: null });
+  Object.assign(state, { marks: new Set(), samples: [], classes: [], net: null, wStatus: 'none', wNote: '', dirty: false, hadConfig: false, zipHadWeights: false, skipped: 0, wrong: [], cm: null, evalStale: false, insp: null });
   state.hist = { loss: [], tacc: [], vacc: [] };
 }
 function resetModel() { state.net = null; state.wStatus = 'none'; state.wNote = ''; state.dirty = false; state.cm = null; state.wrong = []; }
 function ensureNet() { const N = state.classes.length; if (!state.net || state.net.N !== N) { state.net = makeNet(N); state.wStatus = 'none'; } return state.net; }
-function hasModel() { return state.net && state.net.N === state.classes.length && state.wStatus !== 'none' && state.wStatus !== 'refused'; }
+function hasModel() { return state.net && state.net.N === state.classes.length && state.net.key === layoutKey() && state.wStatus !== 'none' && state.wStatus !== 'refused'; }
 
 function splitParams() { const mode = $('valMode').value, v = parseFloat($('valAmt').value); return { mode, p: Math.max(0, Number.isFinite(v) ? v : 0) }; }
 function currentSplit() {
@@ -624,18 +686,25 @@ function currentSplit() {
 
 // ---------- weights ----------
 function applyWeights(buf) {
-  const N = state.classes.length, exp = totalFloats(N) * 4;
+  const N = state.classes.length;
   if (N < 1) { state.wStatus = 'refused'; state.wNote = 'A weights file was found but there are no classes, so its size cannot be checked.'; return; }
+  let exp = totalFloats(N) * 4;
   if (buf.byteLength !== exp) {
-    const nn = (buf.byteLength / 4 - 408) / 6729;
-    state.wStatus = 'refused';
-    state.wNote = 'Refused: myWeights.bin is ' + buf.byteLength + ' bytes but ' + N + ' classes need ' + exp + ' bytes. ' +
-      (Number.isInteger(nn) && nn > 0 ? 'That file fits ' + nn + ' classes.' : 'Its size does not fit any class count.');
-    return;
+    const c = findLayouts(buf.byteLength, N);
+    if (c.length === 1) {
+      const from = layoutKey(); setLayout(c[0][0], c[0][1], c[0][2]); syncLayoutControls(); state.samples.forEach(s => s.input = null);
+      log('Layout changed from ' + from + ' to ' + layoutKey() + ' (input x conv1 x conv2): it is the only layout whose weight file size fits.');
+      exp = totalFloats(N) * 4;
+    } else {
+      state.wStatus = 'refused';
+      state.wNote = 'Refused: myWeights.bin is ' + buf.byteLength + ' bytes but the current layout (input ' + IN + ', filters ' + C1F + '/' + C2F + ') with ' + N + ' classes needs ' + exp + ' bytes. ' +
+        (c.length ? 'Layouts that fit this file: ' + c.slice(0, 4).map(x => 'input ' + x[0] + ', filters ' + x[1] + '/' + x[2]).join('; ') + '. Set one of them in section 3, then load again.' : 'No layout on this page fits that size, so the class count is probably different.');
+      return;
+    }
   }
   const net = makeNet(N); parseWeights(net, buf);
   if (!weightsFinite(net)) { state.wStatus = 'refused'; state.wNote = 'Refused: myWeights.bin contains NaN or Infinity.'; return; }
-  state.net = net; state.wStatus = 'loaded'; state.wNote = 'Loaded header/myWeights.bin (' + buf.byteLength + ' bytes, size matches ' + N + ' classes).';
+  state.net = net; state.wStatus = 'loaded'; state.wNote = 'Loaded header/myWeights.bin (' + buf.byteLength + ' bytes, size matches ' + N + ' classes, input ' + IN + ', filters ' + C1F + '/' + C2F + ').';
 }
 
 // ---------- loading ----------
@@ -696,6 +765,9 @@ async function ingest(src) {
   if (src.cfg && Array.isArray(src.cfg.classes)) { order = src.cfg.classes.filter(c => typeof c === 'string'); state.hadConfig = true; }
   order = order.concat(src.folders.filter(f => !order.includes(f)).sort());
   state.classes = order;
+  if (src.cfg && layoutValid(src.cfg.input_size, src.cfg.conv1_filters, src.cfg.conv2_filters)) {
+    setLayout(src.cfg.input_size, src.cfg.conv1_filters, src.cfg.conv2_filters); syncLayoutControls();
+  }
   for (const it of src.items) addSample(order.indexOf(it.clsName), it.name, it.blob);
   state.zipHadWeights = !!src.weights;
   if (src.weights) applyWeights(src.weights);
@@ -732,9 +804,8 @@ function renderClasses() {
     '</td><td><button class="danger" data-rm="' + i + '">Remove</button></td></tr>').join('')
     : '<tr><td colspan="4" class="note">No classes yet.</td></tr>';
   tb.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => removeClass(+b.dataset.rm));
-  $('fwLines').textContent = state.classes.length
-    ? '#define NUM_CLASSES ' + state.classes.length + '\nString myClassLabels[NUM_CLASSES] = {' + state.classes.map(k => '"' + k + '"').join(', ') + '};'
-    : '(no classes yet)';
+  $('fwLines').textContent = '#define INPUT_SIZE ' + IN + '\n#define CONV1_FILTERS ' + C1F + '\n#define CONV2_FILTERS ' + C2F + '\n' +
+    (state.classes.length ? '#define NUM_CLASSES ' + state.classes.length + '\nString myClassLabels[NUM_CLASSES] = {' + state.classes.map(k => '"' + k + '"').join(', ') + '};' : '// add classes to get NUM_CLASSES and myClassLabels[]');
   const sel = $('capClass'), keep = sel.value;
   sel.innerHTML = state.classes.map((k, i) => '<option value="' + i + '">' + esc(k) + '</option>').join('');
   if (keep && state.classes[+keep]) sel.value = keep;
@@ -762,7 +833,7 @@ function renderBrowser() {
 
 function renderModelInfo() {
   const N = state.classes.length; let h = '';
-  h += '<div>Architecture: input 64x64x3 RGB (0..1) &rarr; conv 3x3x4 (leaky 0.1) &rarr; maxpool 2 &rarr; conv 3x3x8 (leaky 0.1) &rarr; flatten ' + FLAT + ' &rarr; dense ' + (N || 'N') + ' &rarr; softmax. Locked to the firmware; the layout is not configurable.</div>';
+  h += '<div>Architecture: input ' + IN + 'x' + IN + 'x3 RGB (0..1) &rarr; conv 3x3x' + C1F + ' (leaky 0.1) &rarr; maxpool 2 &rarr; conv 3x3x' + C2F + ' (leaky 0.1) &rarr; flatten ' + FLAT + ' &rarr; dense ' + (N || 'N') + ' &rarr; softmax. The sketch must be compiled with the same INPUT_SIZE and filter counts (section 2 shows the lines).</div>';
   if (N) h += '<div>Parameters: ' + totalFloats(N).toLocaleString() + ' floats, weight file ' + (totalFloats(N) * 4).toLocaleString() + ' bytes (' + N + ' classes)</div>';
   h += '<div>Model in memory: ' + ({ none: 'none (random init on the next Train)', refused: 'none, weights file was refused', loaded: 'loaded from the SD card', trained: 'trained in this browser' + (state.dirty ? ', not saved yet' : ', saved') }[state.wStatus]) + '</div>';
   if (state.wStatus === 'refused') h += '<div class="bad">' + esc(state.wNote) + '</div>';
@@ -852,6 +923,7 @@ function heatColor(t) {
   return [255 * c(1.5 - Math.abs(4 * t - 3)), 255 * c(1.5 - Math.abs(4 * t - 2)), 255 * c(1.5 - Math.abs(4 * t - 1))];
 }
 function drawHeatOn(ctx, size, net, agg) {
+  heatCanvas.width = heatCanvas.height = C2O;
   const c = net.a.c2o, n = C2O * C2O, mp = new Float32Array(n); let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) {
     let m = -Infinity, s = 0;
@@ -1007,6 +1079,7 @@ async function onTrain() {
   state.training = false; state.pause = false; setTrainButtons();
 }
 function setTrainButtons() {
+  ['inSize', 'c1f', 'c2f'].forEach(id => $(id).disabled = state.training);
   $('btnTrain').disabled = state.training; $('btnPause').disabled = !state.training; $('btnStop').disabled = !state.training;
   $('btnPause').textContent = state.pause ? 'Resume' : 'Pause';
 }
@@ -1088,7 +1161,7 @@ async function liveLoop() {
 }
 
 // ---------- save ----------
-const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML v44', input_size: IN, input_channels: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Read by the browser page for class order only. The device firmware does not read this file.' }, null, 2);
+const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML v44 / firmware-v002', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Read by the browser page for class order only. The device firmware does not read this file.' }, null, 2);
 
 async function saveWeights() {
   const st = $('saveStatus');
@@ -1135,6 +1208,117 @@ async function saveZip(share) {
   $('saveStatus').textContent = 'Downloaded ' + name + ' (' + (blob.size / 1e6).toFixed(2) + ' MB).'; log($('saveStatus').textContent); renderModelInfo();
 }
 
+// ---------- model layout ----------
+function syncLayoutControls() {
+  const sel = $('inSize');
+  if (![...sel.options].some(o => +o.value === IN)) { const o = document.createElement('option'); o.value = IN; o.textContent = IN + ' x ' + IN; sel.appendChild(o); }
+  sel.value = IN; $('c1f').value = C1F; $('c2f').value = C2F;
+}
+function onLayoutChange() {
+  if (state.training) { syncLayoutControls(); return; }
+  const i = parseInt($('inSize').value), a = parseInt($('c1f').value), b = parseInt($('c2f').value);
+  if (!layoutValid(i, a, b)) { alert('Input size must be even, 16 to 128. Conv1 filters 1 to 16. Conv2 filters 1 to 32.'); syncLayoutControls(); return; }
+  if (i === IN && a === C1F && b === C2F) return;
+  if (state.net && state.dirty && !confirm('Changing the layout discards the unsaved model in memory. Continue?')) { syncLayoutControls(); return; }
+  setLayout(i, a, b); state.samples.forEach(s => s.input = null); resetModel(); state.hist = { loss: [], tacc: [], vacc: [] };
+  log('Layout set to input ' + IN + ', conv1 ' + C1F + ', conv2 ' + C2F + ' (' + FLAT + ' flattened, ' + (totalFloats(Math.max(1, state.classes.length)) * 4) + ' bytes of weights for ' + Math.max(1, state.classes.length) + ' classes). Model in memory discarded. Update INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS in the sketch.');
+  renderAll();
+}
+
+// ---------- burst capture ----------
+let bursting = false; const BURST_N = 10, BURST_MS = 100;
+async function burst() {
+  if (bursting) return;
+  if (!state.mode) { log('Load a data source first (section 1).'); return; }
+  const ci = parseInt($('capClass').value);
+  if (!state.classes[ci]) { log('Add or pick a class first.'); return; }
+  if (!state.stream) { log('Start the camera first.'); return; }
+  let dir = null;
+  if (state.mode === 'dir') { try { dir = await classDir(ci, true); } catch (e) { log('Cannot open the class folder: ' + e.message); return; } }
+  bursting = true;
+  const btn = $('btnBurst'), rec = $('rec'), wrap = $('capWrap'), got = []; let last = '';
+  btn.classList.add('recording'); rec.classList.add('on');
+  try {
+    for (let i = 0; i < BURST_N; i++) {
+      const t0 = performance.now(); btn.textContent = '\u25CF ' + (i + 1) + '/' + BURST_N;
+      if (!grabFrame()) break;
+      wrap.classList.add('flash'); setTimeout(() => wrap.classList.remove('flash'), 60);
+      let name = 'img_' + Date.now() + '.jpg'; if (name === last) name = 'img_' + (Date.now() + 1) + '.jpg'; last = name;
+      got.push({ name, blob: await frameBlob() });
+      const wait = BURST_MS - (performance.now() - t0); if (wait > 0) await sleep(wait);
+    }
+  } finally { rec.classList.remove('on'); btn.classList.remove('recording'); btn.textContent = 'Saving ...'; }
+  let saved = 0;
+  for (const g of got) {
+    if (dir) { try { await writeFile(dir, g.name, g.blob); } catch (e) { log('Write failed: ' + e.message); break; } }
+    addSample(ci, g.name, g.blob); saved++;
+  }
+  state.evalStale = true; btn.textContent = 'Burst 10 (B)'; bursting = false;
+  log('Burst: saved ' + saved + ' of ' + BURST_N + ' images into ' + state.classes[ci] + ' (' + counts()[ci] + ' images).');
+  renderSource(); renderClasses(); renderBrowser(); updateSplitInfo();
+}
+
+// ---------- review mode ----------
+const rev = { list: [], i: 0, ci: 0, tok: 0 };
+function pruneMarks() { for (const s of [...state.marks]) if (!state.samples.includes(s)) state.marks.delete(s); }
+function revClassOptions() {
+  const c = counts(); $('revClass').innerHTML = state.classes.map((k, i) => '<option value="' + i + '">' + esc(k) + ' (' + c[i] + ')</option>').join('');
+  $('revClass').value = rev.ci;
+}
+function openReview() {
+  if (!state.samples.length) { log('Nothing to review: no images loaded.'); return; }
+  const c = counts(); if (!state.classes[rev.ci] || !c[rev.ci]) rev.ci = Math.max(0, c.findIndex(v => v > 0));
+  revClassOptions(); $('rev').showModal(); buildRev(0);
+}
+async function buildRev(start) {
+  const tok = ++rev.tok; rev.ci = parseInt($('revClass').value);
+  let list = state.samples.filter(s => s.cls === rev.ci).sort((a, b) => a.name < b.name ? -1 : 1);
+  if ($('revSusp').checked && hasModel()) {
+    for (const s of list) { forward(state.net, await getInput(s)); s._pt = state.net.a.probs[s.cls]; if (tok !== rev.tok) return; }
+    list = list.slice().sort((a, b) => a._pt - b._pt);
+  }
+  rev.list = list; rev.i = Math.min(start, Math.max(0, list.length - 1)); await showRev();
+}
+async function showRev() {
+  const tok = ++rev.tok, s = rev.list[rev.i]; pruneMarks();
+  $('revDelete').textContent = 'Delete marked (' + state.marks.size + ')'; $('revDelete').disabled = !state.marks.size;
+  if (!s) { $('revImg').removeAttribute('src'); $('revFrame').classList.remove('marked'); $('revCount').textContent = 'This class has no images.'; $('revPred').textContent = '-'; return; }
+  $('revImg').src = s.url; $('revFrame').classList.toggle('marked', state.marks.has(s));
+  $('revCount').textContent = state.classes[s.cls] + '  ' + (rev.i + 1) + ' / ' + rev.list.length + '  ' + s.name;
+  if (hasModel()) {
+    const x = await getInput(s); if (tok !== rev.tok) return;
+    forward(state.net, x); const p = state.net.a.probs, top = argmax(p), agree = top === s.cls;
+    $('revPred').innerHTML = 'Model says <b class="' + (agree ? 'ok' : 'bad') + '">' + esc(state.classes[top]) + ' ' + (p[top] * 100).toFixed(0) + '%</b>' + (agree ? '' : '<br>Labelled ' + esc(state.classes[s.cls]) + ' (' + (p[s.cls] * 100).toFixed(0) + '%). Look closely.');
+  } else $('revPred').textContent = 'No model in memory, so no prediction is shown.';
+}
+function revMove(d) {
+  if (!rev.list.length) return;
+  const n = rev.i + d;
+  if (n >= rev.list.length) { revNextClass(); return; }
+  rev.i = Math.max(0, n); showRev();
+}
+function revNextClass() {
+  const c = counts(), n = state.classes.length;
+  for (let k = 1; k <= n; k++) { const j = (rev.ci + k) % n; if (c[j] > 0) { $('revClass').value = j; buildRev(0); return; } }
+}
+function revToggle() {
+  const s = rev.list[rev.i]; if (!s) return;
+  if (state.marks.has(s)) state.marks.delete(s); else { state.marks.add(s); if (rev.i < rev.list.length - 1) rev.i++; }
+  showRev();
+}
+async function deleteMarked() {
+  pruneMarks(); const list = [...state.marks]; if (!list.length) return;
+  const per = {}; list.forEach(s => per[state.classes[s.cls]] = (per[state.classes[s.cls]] || 0) + 1);
+  if (!confirm('Delete ' + list.length + ' marked images (' + Object.entries(per).map(([k, v]) => k + ' ' + v).join(', ') + ') from the ' + (state.mode === 'dir' ? 'SD card folder' : 'zip data') + '? This cannot be undone.')) return;
+  let del = 0;
+  for (const s of list) {
+    if (state.mode === 'dir') { try { await (await classDir(s.cls, false)).removeEntry(s.name); } catch (e) { log('Delete failed for ' + s.name + ': ' + e.message); continue; } }
+    URL.revokeObjectURL(s.url); state.samples = state.samples.filter(x => x !== s); state.wrong = state.wrong.filter(w => w.s !== s); state.marks.delete(s); del++;
+  }
+  state.evalStale = true; log('Review: deleted ' + del + ' of ' + list.length + ' marked images.');
+  renderSource(); renderClasses(); renderBrowser(); updateSplitInfo(); renderEval(); revClassOptions(); await buildRev(rev.i);
+}
+
 // ---------- wiring ----------
 $('btnDir').onclick = pickDir;
 $('btnZip').onclick = () => $('zipFile').click();
@@ -1167,9 +1351,27 @@ $('valMode').onchange = () => {
 $('valAmt').oninput = () => { renderClasses(); updateSplitInfo(); };
 $('epochs').oninput = () => { const v = parseInt($('epochs').value); if (v >= 1 && !state.training) { state.epochsPlanned = v; drawCharts(); } };
 document.addEventListener('keydown', e => {
-  if (e.code !== 'Space' || $('insp').open || !state.stream) return;
+  if ((e.code !== 'Space' && e.code !== 'KeyB') || $('insp').open || $('rev').open || !state.stream) return;
   if (/^(INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY)$/.test(document.activeElement.tagName)) return;
-  e.preventDefault(); capture();
+  e.preventDefault(); if (e.code === 'KeyB') burst(); else capture();
+});
+$('btnBurst').onclick = burst;
+$('btnReview').onclick = openReview;
+$('inSize').onchange = onLayoutChange; $('c1f').onchange = onLayoutChange; $('c2f').onchange = onLayoutChange;
+$('revClose').onclick = () => $('rev').close();
+$('revClass').onchange = () => buildRev(0);
+$('revSusp').onchange = () => buildRev(0);
+$('revPrev').onclick = () => revMove(-1);
+$('revNext').onclick = () => revMove(1);
+$('revMark').onclick = revToggle;
+$('revNextClass').onclick = revNextClass;
+$('revDelete').onclick = deleteMarked;
+$('revClear').onclick = () => { state.marks.clear(); showRev(); };
+$('rev').addEventListener('keydown', e => {
+  if (/^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); revMove(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); revMove(1); }
+  else if (e.key === 'x' || e.key === 'X' || e.key === 'Delete') { e.preventDefault(); revToggle(); }
 });
 window.addEventListener('beforeunload', e => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -1179,8 +1381,8 @@ if (!window.showDirectoryPicker) {
 } else $('dirNote').textContent = 'Desktop Chrome or Edge: pick the SD card root and changes are written straight to the card. Other browsers: use .zip.';
 if (navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'])], 'x.zip', { type: 'application/zip' })] })) $('btnShare').hidden = false;
 
-syncHeatControls(); renderAll();
-log('Vision CNN SD trainer ' + VERSION + ' ready. Architecture locked to firmware v44: 64x64x3, ' + C1F + '+' + C2F + ' filters, ' + FLAT + ' flattened.');
+syncHeatControls(); syncLayoutControls(); renderAll();
+log('Vision CNN SD trainer ' + VERSION + ' ready. Layout ' + IN + 'x' + IN + 'x3, conv filters ' + C1F + '/' + C2F + ', ' + FLAT + ' flattened.');
 </script>
 </body>
 </html>
