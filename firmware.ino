@@ -1,6 +1,6 @@
 // ======================================================
 // XIAO ML KIT (OR XIAO ESP32S3 SENSE)
-// FULL VISION ML  — v44
+// FULL VISION ML  — v45  (firmware-v002)
 //
 //
 // Small Image collection, training, inference for education and proof of concept
@@ -15,6 +15,14 @@
 //
 // Github Profile https://github.com/hpssjellis
 // LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
+//
+// v45 changes (firmware-v002):
+//  - Camera is now flipped vertically as well as mirrored, to match the images from the web trainer page
+//  - Camera brightness / AE level raised (MY_CAM_* settings below) and a few warm-up frames are discarded
+//  - Hard-coded "36" in conv2 removed, so CONV1_FILTERS, CONV2_FILTERS and INPUT_SIZE can really be changed
+//  - myLoadWeights() refuses a myWeights.bin whose size does not match this sketch's layout
+//  - myWeights.h header comment lists INPUT_SIZE and filter counts as well as the classes
+//  NOTE: images saved with v44 are upside down compared with v45. Recapture them, or flip them, before training.
 //
 // For platformio you need the U8g2 library declared in the platformio.ini file and OPI PSRAM set
 // lib_deps =  olikraus/U8g2 @ ^2.35.30
@@ -78,6 +86,20 @@ const int myThresholdRelease = 900;
 //const unsigned long myScreenTimeout = 300000; // not used presently
 
 
+// ======================================================
+// CAMERA IMAGE SETTINGS (v45)
+// The web trainer page shows images upright, mirrored left-right. To match it the sensor is
+// mirrored AND flipped vertically. Brightness and AE level range from -2 to 2 (0 = sensor default).
+// If images are still darker than the web page, raise MY_CAM_BRIGHTNESS or MY_CAM_AE_LEVEL to 2.
+// If they wash out, lower them. Existing images on the SD card are NOT changed by these settings.
+// ======================================================
+#define MY_CAM_HMIRROR        1
+#define MY_CAM_VFLIP          1
+#define MY_CAM_BRIGHTNESS     1
+#define MY_CAM_AE_LEVEL       1
+#define MY_CAM_WARMUP_FRAMES  5   // frames discarded after start so auto exposure can settle
+
+
 
 
 
@@ -133,11 +155,17 @@ bool myWeightsTrained = false;
 
 // ======================================================
 // CONFIGURABLE INPUT RESOLUTION
+// Square and EVEN (the 2x2 max pool needs INPUT_SIZE-2 to be even). Web page supports 16..128.
+// Images on the SD card are always 240x240; they are resampled to INPUT_SIZE when loaded.
+// Larger sizes train and infer much more slowly (cost grows with the square of INPUT_SIZE).
 // ======================================================
 #define INPUT_SIZE 64
 
 // ======================================================
 // CNN ARCHITECTURE CONSTANTS
+// The web trainer page shows the matching #define lines for these values.
+// CONV1_FILTERS and CONV2_FILTERS can be changed. The 3x3 kernel is fixed in the loops below,
+// so CONV*_KERNEL_SIZE is informational only.
 // ======================================================
 #define CONV1_KERNEL_SIZE 3
 #define CONV1_FILTERS 4
@@ -145,7 +173,10 @@ bool myWeightsTrained = false;
 
 #define CONV2_KERNEL_SIZE 3
 #define CONV2_FILTERS 8
-#define CONV2_WEIGHTS (CONV2_KERNEL_SIZE * CONV2_KERNEL_SIZE * 4 * CONV2_FILTERS)
+#define CONV2_WEIGHTS (CONV2_KERNEL_SIZE * CONV2_KERNEL_SIZE * CONV1_FILTERS * CONV2_FILTERS)
+
+// v45: number of weights one conv2 filter owns (was the hard-coded 36 when CONV1_FILTERS was 4)
+#define CONV2_IN_STRIDE (CONV1_FILTERS * 9)
 
 #define CONV1_OUTPUT_SIZE (INPUT_SIZE - 2)
 #define POOL1_OUTPUT_SIZE (CONV1_OUTPUT_SIZE / 2)
@@ -153,6 +184,12 @@ bool myWeightsTrained = false;
 #define FLATTENED_SIZE (CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE * CONV2_FILTERS)
 
 #define OUTPUT_WEIGHTS (FLATTENED_SIZE * NUM_CLASSES)
+
+static_assert(INPUT_SIZE % 2 == 0, "INPUT_SIZE must be even");
+static_assert(CONV2_OUTPUT_SIZE >= 1, "INPUT_SIZE is too small");
+
+// v45: exact size in bytes of header/myWeights.bin for this sketch's layout
+#define MY_EXPECTED_WEIGHT_BYTES ((size_t)(CONV1_WEIGHTS + CONV1_FILTERS + CONV2_WEIGHTS + CONV2_FILTERS + OUTPUT_WEIGHTS + NUM_CLASSES) * 4)
 
 // ======================================================
 // GLOBAL VARIABLE DEFINITIONS
@@ -395,7 +432,7 @@ void myAllocateMemory() {
   for(int i=0; i<CONV1_WEIGHTS; i++) myConv1_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c1std;
   for(int i=0; i<CONV1_FILTERS; i++) myConv1_b[i] = 0;
   
-  float c2std = sqrt(2.0/36.0);
+  float c2std = sqrt(2.0/(double)CONV2_IN_STRIDE);   // v45: was sqrt(2.0/36.0)
   for(int i=0; i<CONV2_WEIGHTS; i++) myConv2_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c2std;
   for(int i=0; i<CONV2_FILTERS; i++) myConv2_b[i] = 0;
   
@@ -419,9 +456,12 @@ void myExportHeader() {
   file.println("#ifndef MY_MODEL_H\n#define MY_MODEL_H");
   file.println("// ======================================================");
   file.println("// IMPORTANT: After copying this file to your sketch folder,");
-  file.println("// update BOTH of the following lines in your main sketch");
-  file.println("// to match the number of classes and labels used during training:");
+  file.println("// update ALL of the following lines in your main sketch");
+  file.println("// to match the layout, number of classes and labels used during training:");
   file.println("//");
+  file.printf( "//   #define INPUT_SIZE %d\n", INPUT_SIZE);
+  file.printf( "//   #define CONV1_FILTERS %d\n", CONV1_FILTERS);
+  file.printf( "//   #define CONV2_FILTERS %d\n", CONV2_FILTERS);
   file.printf( "//   #define NUM_CLASSES %d\n", NUM_CLASSES);
 
   file.print("//   String myClassLabels[NUM_CLASSES] = {");
@@ -467,6 +507,18 @@ bool myLoadWeights() {
   Serial.println("Loading weights from SD...");
   File f = SD.open("/header/myWeights.bin", FILE_READ);
   if (!f) return false;
+
+  // v45: refuse a weights file that does not match this sketch's layout and class count
+  if ((size_t)f.size() != MY_EXPECTED_WEIGHT_BYTES) {
+    Serial.printf("REFUSED myWeights.bin: file is %u bytes but this sketch needs %u bytes\n",
+                  (unsigned)f.size(), (unsigned)MY_EXPECTED_WEIGHT_BYTES);
+    Serial.printf("Sketch layout: INPUT_SIZE %d, CONV1_FILTERS %d, CONV2_FILTERS %d, NUM_CLASSES %d\n",
+                  INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS, NUM_CLASSES);
+    Serial.println("Match these #defines to the web trainer page, or retrain. Using random/baked weights instead.");
+    f.close();
+    return false;
+  }
+
   f.read((uint8_t*)myConv1_w, CONV1_WEIGHTS*4); 
   f.read((uint8_t*)myConv1_b, CONV1_FILTERS*4);
   f.read((uint8_t*)myConv2_w, CONV2_WEIGHTS*4); 
@@ -554,7 +606,9 @@ void setup() {
   while (!Serial && millis() < 3000); 
   delay(1000);  // slow down the startup
   
-  Serial.println("\n=== XIAO ESP32-S3 ML System Starting ===");
+  Serial.println("\n=== XIAO ESP32-S3 ML System Starting (v45) ===");
+  Serial.printf("Layout: INPUT_SIZE %d, CONV1_FILTERS %d, CONV2_FILTERS %d, NUM_CLASSES %d\n",
+                INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS, NUM_CLASSES);
   Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
   Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
   
@@ -602,13 +656,27 @@ if (!myRgbBuffer) {
   config.xclk_freq_hz = 20000000; config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = FRAMESIZE_240X240; config.jpeg_quality = 12;
   config.fb_count = 1;     // 2
-  esp_camera_init(&config);
-  Serial.println("Camera initialized");
+  esp_err_t camErr = esp_camera_init(&config);
+  if (camErr != ESP_OK) {
+    Serial.printf("Camera init FAILED: 0x%x\n", camErr);
+  } else {
+    Serial.println("Camera initialized");
+  }
   sensor_t * s = esp_camera_sensor_get();
     if (s != NULL) {
-     // s->set_vflip(s, 1);    // 1 = Flip vertically (Upside Down)
-      s->set_hmirror(s, 1);  // 1 = Mirror horizontally
+      // v45: mirrored + flipped vertically to match the web trainer page, and brighter
+      s->set_hmirror(s, MY_CAM_HMIRROR);
+      s->set_vflip(s, MY_CAM_VFLIP);
+      s->set_brightness(s, MY_CAM_BRIGHTNESS);   // -2..2
+      s->set_ae_level(s, MY_CAM_AE_LEVEL);       // -2..2
     }
+
+  // v45: throw away the first few frames so auto exposure settles before any image is used
+  for (int i = 0; i < MY_CAM_WARMUP_FRAMES; i++) {
+    camera_fb_t* warm = esp_camera_fb_get();
+    if (warm) esp_camera_fb_return(warm);
+    delay(60);
+  }
 
   // ESP-IDF Log Levels (ordered least to most verbose):
   //   ESP_LOG_NONE    (0) — no output at all
@@ -910,7 +978,7 @@ void myForwardPass(float* input, float* logits) {
           for(int ky=0; ky<3; ky++) {
             for(int kx=0; kx<3; kx++) {
               sum += myPool1_output[ib + (y+ky)*POOL1_OUTPUT_SIZE + (x+kx)] * 
-                     myConv2_w[f*36 + c*9 + ky*3 + kx];
+                     myConv2_w[f*CONV2_IN_STRIDE + c*9 + ky*3 + kx];   // v45: was f*36
             }
           }
         }
@@ -982,7 +1050,7 @@ void myBackwardConv2() {
           for(int ky=0; ky<3; ky++) {
             for(int kx=0; kx<3; kx++) {
               int pi = ib+(y+ky)*POOL1_OUTPUT_SIZE+(x+kx);
-              int wi = f*36+c*9+ky*3+kx;
+              int wi = f*CONV2_IN_STRIDE+c*9+ky*3+kx;   // v45: was f*36
               myConv2_w_grad[wi] += grad * myPool1_output[pi];
               myPool1_grad[pi] += grad * myConv2_w[wi];
             }
