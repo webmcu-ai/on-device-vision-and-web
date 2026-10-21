@@ -1,16 +1,18 @@
 <!DOCTYPE html>
 <!--
-  webMCU-AI  |  Vision CNN SD trainer  |  v005
-  Companion page for the XIAO ESP32-S3 "FULL VISION ML v44" firmware.
+  webMCU-AI  |  Vision CNN SD trainer  |  v006
+  Companion page for the XIAO ESP32-S3 "FULL VISION ML" firmware (firmware-v007; firmware-v005 and later send debug frames).
   Reads images/<class>/*.jpg from the SD card, trains the same CNN (input size and filters selectable) in plain JS,
   analyzes the dataset, and writes header/myWeights.bin back for the device to load.
+  v006: input sizes 16..512 (preset list plus a number box), device memory and speed estimate for the chosen layout,
+        decoded images are cached as bytes (4x less browser memory at large sizes).
   No external libraries. No network. MIT license. Use at your own risk.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vision CNN SD trainer v005</title>
+<title>Vision CNN SD trainer v006</title>
 <style>
 :root{--bg:#11151b;--panel:#182029;--panel2:#1f2a36;--line:#2c3947;--text:#dde5ee;--mut:#8b9aac;--acc:#66d1bd;--acc-ink:#062a24;--bad:#ef6b73;--warn:#e9b44c;--ok:#7bd88f;--r:8px}
 *{box-sizing:border-box}
@@ -91,8 +93,8 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 </head>
 <body>
 <header>
-  <h1>Vision CNN SD trainer<span class="ver">v005</span></h1>
-  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (v44, or firmware-v005 for config.json class names and debug frames): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
+  <h1>Vision CNN SD trainer<span class="ver">v006</span></h1>
+  <p>Browser companion for the XIAO ESP32-S3 FULL VISION ML firmware (firmware-v007; firmware-v005 and later also give config.json class names and debug frames): load the SD card, add images, review and clean them, train the same CNN, then write myWeights.bin back to the card.</p>
   <p>Everything runs in this page. Images and weights never leave your computer.</p>
 </header>
 <main>
@@ -117,7 +119,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <input type="text" id="newClass" placeholder="New class, e.g. 3Book" aria-label="New class name">
     <button id="btnAddClass">Add class</button>
   </div>
-  <p class="note">The sketch must be compiled with these values (firmware-v002 and later refuse a weights file of the wrong size). firmware-v003 also reads the class names from header/config.json at boot, but their count must equal NUM_CLASSES, so adding or removing a class means editing NUM_CLASSES and reflashing:</p>
+  <p class="note">The sketch must be compiled with these values (the firmware refuses a weights file of the wrong size). The firmware also reads the class names from header/config.json at boot, but their count must equal NUM_CLASSES, so adding or removing a class means editing NUM_CLASSES and reflashing:</p>
   <pre id="fwLines">(no classes yet)</pre>
 
   <h3>Add images from the webcam</h3>
@@ -131,7 +133,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
         <button id="btnBurst" class="burst">Burst 10 (B)</button>
         <label class="chk" style="gap:6px">Delay <input type="number" id="burstMs" value="0" min="0" max="2000" step="10" style="width:84px" aria-label="Burst delay in milliseconds"> ms</label>
       </div>
-      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). firmware-v002 and later also flip vertically, so device and page images match.</label>
+      <label class="chk"><input type="checkbox" id="mirror" checked> Mirror frames horizontally like the device (hmirror on). The device also flips vertically, so device and page images match.</label>
       <p class="note" id="capNote">Frames are center-cropped to a square, resized to 240x240 and saved as JPEG straight into images/&lt;class&gt;/ (SD folder) or the zip. Burst takes 10 fresh camera frames back to back, plus the delay you set between them, while the button is red, then saves them. Burst frames are near-duplicates, so move or tilt the object between bursts.</p>
     </div>
   </div>
@@ -147,13 +149,48 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   <h2>3 Train</h2>
   <h3 style="margin-top:0">Model layout</h3>
   <div class="grid">
-    <label>Input size (square, even)
-      <select id="inSize"><option value="24">24 x 24</option><option value="32">32 x 32</option><option value="40">40 x 40</option><option value="48">48 x 48</option><option value="64">64 x 64</option><option value="80">80 x 80</option><option value="96">96 x 96</option><option value="128">128 x 128</option></select>
+    <label>Input size (preset)
+      <select id="inSize">
+        <optgroup label="Exact fractions of the 240x240 camera frame">
+          <option value="24">24 x 24</option>
+          <option value="30">30 x 30</option>
+          <option value="40">40 x 40</option>
+          <option value="48">48 x 48</option>
+          <option value="60">60 x 60</option>
+          <option value="80">80 x 80</option>
+          <option value="120">120 x 120 (tested on device)</option>
+          <option value="240">240 x 240 (camera native, no resampling)</option>
+        </optgroup>
+        <optgroup label="Other sizes up to the camera frame">
+          <option value="32">32 x 32</option>
+          <option value="64" selected>64 x 64 (device can train this)</option>
+          <option value="96">96 x 96</option>
+          <option value="112">112 x 112</option>
+          <option value="128">128 x 128</option>
+          <option value="144">144 x 144</option>
+          <option value="160">160 x 160</option>
+          <option value="176">176 x 176</option>
+          <option value="192">192 x 192</option>
+          <option value="224">224 x 224</option>
+        </optgroup>
+        <optgroup label="Larger than the camera frame (pixels repeat, slow)">
+          <option value="256">256 x 256</option>
+          <option value="300">300 x 300 (299 is odd, not allowed)</option>
+          <option value="320">320 x 320</option>
+          <option value="384">384 x 384</option>
+          <option value="416">416 x 416</option>
+          <option value="448">448 x 448</option>
+          <option value="512">512 x 512</option>
+        </optgroup>
+        <option value="custom">Custom (type it in the box)</option>
+      </select>
     </label>
+    <label>Or type any even size (16 to 512)<input type="number" id="inSizeNum" value="64" min="16" max="512" step="2"></label>
     <label>Conv1 filters (1-16)<input type="number" id="c1f" value="4" step="1" min="1" max="16"></label>
     <label>Conv2 filters (1-32)<input type="number" id="c2f" value="8" step="1" min="1" max="32"></label>
   </div>
-  <p class="note">These are compile-time settings in the sketch (INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS). Copy the lines from section 2 into the sketch after changing them. The 3x3 kernel is fixed in the firmware loops. Images on the card stay 240x240, so changing the size needs no new photos, only a retrain. Cost grows with the square of the input size. Changing the layout discards the model in memory.</p>
+  <div class="info" id="layoutInfo" style="margin-top:10px"></div>
+  <p class="note">These are compile-time settings in the sketch (INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS). Copy the lines from section 2 into the sketch after changing them. The 3x3 kernel is fixed in the firmware loops. Images on the card stay 240x240, so changing the size needs no new photos, only a retrain. The size must be even because of the 2x2 max pool. Cost grows with the square of the input size, in the browser and on the device.</p>
   <h3>Training settings</h3>
   <div class="grid">
     <label>Learning rate<input type="number" id="lr" value="0.0003" step="0.0001" min="0.000001"></label>
@@ -226,7 +263,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <canvas id="liveHeat" width="288" height="288"></canvas>
     <div style="flex:1;min-width:230px" id="liveBars"></div>
   </div>
-  <p class="note">Each live frame goes through the same path as a stored image: square crop, 240x240 JPEG, decode, nearest-pixel resize to 64x64.</p>
+  <p class="note">Each live frame goes through the same path as a stored image: square crop, 240x240 JPEG, decode, nearest-pixel resize to the model input size chosen in section 3.</p>
 </section>
 
 <!-- ============ 6 SAVE ============ -->
@@ -239,7 +276,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <label class="chk"><input type="checkbox" id="zipImgs" checked> Include images in .zip</label>
   </div>
   <div class="info" id="saveInfo">
-    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class names and layout is written next to it. firmware-v003 and later read the class names from it at boot (older firmware ignores it). NUM_CLASSES, INPUT_SIZE and the filter counts always come from the compiled sketch.</div>
+    <div>SD folder mode: the existing weights file is copied to <b>myWeights.bin.bak</b> first, then the new one is written. A <b>config.json</b> with the class names and layout is written next to it. The firmware reads the class names from it at boot. NUM_CLASSES, INPUT_SIZE and the filter counts always come from the compiled sketch.</div>
     <div>Zip mode: Save weights keeps the model for the zip. Save .zip downloads header/myWeights.bin (and images if ticked) in the SD card layout.</div>
   </div>
   <p class="note" id="saveStatus"></p>
@@ -257,7 +294,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   <div class="row">
     <button id="btnSerial" class="primary">Connect</button>
     <span class="note" id="serStatus">Not connected.</span>
-    <label class="chk"><input type="checkbox" id="serDebug" checked> Ask the device for debug frames (firmware-v005)</label>
+    <label class="chk"><input type="checkbox" id="serDebug" checked> Ask the device for debug frames (firmware-v005 or later)</label>
   </div>
   <textarea id="serOut" class="mono" readonly aria-label="Serial output"></textarea>
   <div class="row">
@@ -266,7 +303,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   </div>
   <p class="note">115200 baud, a newline is added to what you send. Close the Arduino IDE serial monitor first. Opening the port can reboot the board, and a reboot may drop the connection: press Connect again. Desktop Chrome or Edge only.</p>
   <h3>Device view</h3>
-  <p class="note">With the box ticked, firmware-v005 sends its camera JPEG (and a heatmap) every 10th inference, each saved image, and a slow live preview while collecting. Frame lines are shown here instead of in the monitor text. With a model in memory that has the same layout, the page runs the same JPEG through its own copy of the network and compares.</p>
+  <p class="note">With the box ticked, the firmware sends its camera JPEG (and a heatmap) every 10th inference, each saved image, and a slow live preview while collecting. Frame lines are shown here instead of in the monitor text. With a model in memory that has the same layout, the page runs the same JPEG through its own copy of the network and compares.</p>
   <div class="row"><label class="chk"><input type="checkbox" class="heatOverlay" checked> Overlay device heatmap on image</label></div>
   <div class="cam">
     <canvas id="devCanvas" width="288" height="288"></canvas>
@@ -324,13 +361,14 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 
 <script>
 'use strict';
-const VERSION = 'v005';
+const VERSION = 'v006';
 
 /* ==CORE START== (no DOM use below this line until CORE END) */
 
 // ---- Architecture constants, copied from the firmware ----
 // Layout is variable (compile-time in the firmware): INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS. Kernel is fixed at 3x3.
-const SRC = 240;                                 // camera frame size
+const SRC = 240;                                 // camera frame size (the images on the card are always this size)
+const MIN_IN = 16, MAX_IN = 512;                 // allowed input sizes (must be even)
 let IN = 64, C1F = 4, C2F = 8, C1O, P1O, C2O, C1W, C2W, FLAT, LUT = null;
 function buildLUT() { const t = new Int32Array(IN); for (let i = 0; i < IN; i++) t[i] = Math.min(Math.floor((i + 0.5) * SRC / IN), SRC - 1); return t; }
 function setLayout(i, a, b) {
@@ -338,11 +376,11 @@ function setLayout(i, a, b) {
   C1W = 27 * C1F; C2W = 9 * C1F * C2F; FLAT = C2O * C2O * C2F; LUT = buildLUT();
 }
 const layoutKey = () => IN + 'x' + C1F + 'x' + C2F;
-const layoutValid = (i, a, b) => Number.isInteger(i) && Number.isInteger(a) && Number.isInteger(b) && i >= 16 && i <= 128 && i % 2 === 0 && a >= 1 && a <= 16 && b >= 1 && b <= 32;
+const layoutValid = (i, a, b) => Number.isInteger(i) && Number.isInteger(a) && Number.isInteger(b) && i >= MIN_IN && i <= MAX_IN && i % 2 === 0 && a >= 1 && a <= 16 && b >= 1 && b <= 32;
 // All layouts whose weight file would be exactly `bytes` long for N classes (used to explain or infer a mismatch).
 function findLayouts(bytes, N) {
   const out = [];
-  for (let i = 16; i <= 128; i += 2) { const c2o = (i - 2) / 2 - 2;
+  for (let i = MIN_IN; i <= MAX_IN; i += 2) { const c2o = (i - 2) / 2 - 2;
     for (let a = 1; a <= 16; a++) for (let b = 1; b <= 32; b++)
       if ((27 * a + a + 9 * a * b + b + c2o * c2o * b * N + N) * 4 === bytes) out.push([i, a, b]); }
   return out;
@@ -508,15 +546,23 @@ function parseWeights(net, buf) {
   for (const k of PARAM_ORDER) { const a = net.w[k]; for (let i = 0; i < a.length; i++, o += 4) a[i] = dv.getFloat32(o, true); }
 }
 
-// RGBA (240x240) -> HWC RGB floats 0..1 with the firmware's nearest-pixel sampling.
-function rgbaToInput(d) {
-  const out = new Float32Array(IN * IN * 3);
+// RGBA (240x240) -> HWC RGB bytes 0..255 with the firmware's nearest-pixel sampling.
+// Images are cached as bytes (4x smaller than floats, matters at large input sizes) and turned into floats when used.
+function rgbaToBytes(d) {
+  const out = new Uint8Array(IN * IN * 3);
   for (let y = 0; y < IN; y++) for (let x = 0; x < IN; x++) {
     const si = (LUT[y] * SRC + LUT[x]) * 4, di = (y * IN + x) * 3;
-    out[di] = d[si] / 255; out[di + 1] = d[si + 1] / 255; out[di + 2] = d[si + 2] / 255;
+    out[di] = d[si]; out[di + 1] = d[si + 1]; out[di + 2] = d[si + 2];
   }
   return out;
 }
+// bytes -> floats 0..1. Pass `out` to reuse a buffer (training does), otherwise a new array is made.
+function bytesToFloat(u, out) {
+  out = out || new Float32Array(u.length);
+  for (let i = 0; i < u.length; i++) out[i] = u[i] / 255;
+  return out;
+}
+function rgbaToInput(d) { return bytesToFloat(rgbaToBytes(d)); }
 
 // Browser-only augmentation: horizontal flip and brightness jitter.
 function augment(x) {
@@ -553,7 +599,8 @@ function takeSnap(net, step) { return { w: copyObj(net.w), m: copyObj(net.m), v:
 function restoreSnap(net, s) { for (const k of PARAM_ORDER) { net.w[k].set(s.w[k]); net.m[k].set(s.m[k]); net.v[k].set(s.v[k]); } }
 
 // Training driver. o: {lr,batch,epochs,dropout,augment,maxStep}. h: hooks {input(s), onBatch, onEpoch, onLog, stopped(), paused()}.
-// Samples must have .cls and be already decoded (h.input returns a Float32Array). Rolls back and halves lr on a non-finite loss.
+// Samples must have .cls and be already decoded (h.input returns a Float32Array that is only valid until the next h.input call).
+// Rolls back and halves lr on a non-finite loss.
 async function runTraining(net, tr, val, o, h) {
   const total = tr.length, B = o.batch, bpe = Math.ceil(total / B);
   let lr = o.lr, step = 0, rollbacks = 0, epoch = 1, snap = takeSnap(net, 0);
@@ -574,6 +621,7 @@ async function runTraining(net, tr, val, o, h) {
         bl += -Math.log(Math.max(net.a.probs[smp.cls], 1e-7));
         if (argmax(net.a.probs) === smp.cls) ok++;
         backward(net, x, smp.cls, mask);
+        if (IN >= 128) await tick();     // large images: let the page breathe after every image
       }
       const n = s1 - s0, avg = bl / n; step++;
       if (!Number.isFinite(avg)) { bad = true; break; }
@@ -589,7 +637,7 @@ async function runTraining(net, tr, val, o, h) {
       continue;
     }
     let vOk = 0;
-    for (const s of val) { forward(net, h.input(s)); if (argmax(net.a.probs) === s.cls) vOk++; }
+    for (const s of val) { forward(net, h.input(s)); if (argmax(net.a.probs) === s.cls) vOk++; if (IN >= 128) await tick(); }
     snap = takeSnap(net, step);
     h.onEpoch({ epoch, loss: eLoss / eN, tacc: eOk / eN, vacc: val.length ? vOk / val.length : null, lr });
     epoch++;
@@ -688,10 +736,12 @@ async function decodeBlob(blob) {
     return sctx.getImageData(0, 0, SRC, SRC).data;
   } finally { URL.revokeObjectURL(url); }
 }
-async function getInput(s) { if (!s.input) s.input = rgbaToInput(await decodeBlob(s.blob)); return s.input; }
+// s.px caches the resized image as bytes. getBytes decodes once; getInput returns a fresh float array each call.
+async function getBytes(s) { if (!s.px) s.px = rgbaToBytes(await decodeBlob(s.blob)); return s.px; }
+async function getInput(s) { return bytesToFloat(await getBytes(s)); }
 
 // ---------- data model helpers ----------
-function addSample(cls, name, blob) { const s = { cls, name, blob, url: URL.createObjectURL(blob), input: null }; state.samples.push(s); return s; }
+function addSample(cls, name, blob) { const s = { cls, name, blob, url: URL.createObjectURL(blob), px: null }; state.samples.push(s); return s; }
 function counts() { const c = new Array(state.classes.length).fill(0); for (const s of state.samples) c[s.cls]++; return c; }
 function clearData() {
   for (const s of state.samples) URL.revokeObjectURL(s.url);
@@ -716,7 +766,7 @@ function applyWeights(buf) {
   if (buf.byteLength !== exp) {
     const c = findLayouts(buf.byteLength, N);
     if (c.length === 1) {
-      const from = layoutKey(); setLayout(c[0][0], c[0][1], c[0][2]); syncLayoutControls(); state.samples.forEach(s => s.input = null);
+      const from = layoutKey(); setLayout(c[0][0], c[0][1], c[0][2]); syncLayoutControls(); state.samples.forEach(s => s.px = null);
       log('Layout changed from ' + from + ' to ' + layoutKey() + ' (input x conv1 x conv2): it is the only layout whose weight file size fits.');
       exp = totalFloats(N) * 4;
     } else {
@@ -801,7 +851,7 @@ async function ingest(src) {
 }
 
 // ---------- rendering ----------
-function renderAll() { renderSource(); renderClasses(); renderBrowser(); renderModelInfo(); updateSplitInfo(); renderEval(); drawCharts(); }
+function renderAll() { renderSource(); renderClasses(); renderBrowser(); renderModelInfo(); renderLayoutInfo(); updateSplitInfo(); renderEval(); drawCharts(); }
 
 function renderSource() {
   const c = counts(), n = state.samples.length; let h = '';
@@ -812,7 +862,7 @@ function renderSource() {
   if (state.wStatus === 'refused') h += '<div class="bad">Weights: ' + esc(state.wNote) + '</div>';
   else if (state.wStatus === 'loaded' || state.wStatus === 'trained') h += '<div class="ok">Weights: ' + esc(state.wNote || 'model in memory') + '</div>';
   else h += '<div>Weights: no header/myWeights.bin found. Training starts from random He-init, like the device.</div>';
-  h += state.hadConfig ? '<div>config.json found: class order and layout are taken from it. firmware-v003 and later read the class names from it at boot; older firmware ignores it.</div>'
+  h += state.hadConfig ? '<div>config.json found: class order and layout are taken from it. The firmware reads the class names from it at boot.</div>'
                        : '<div>No config.json: class folders are sorted alphabetically. Keep numeric prefixes so this matches myClassLabels[].</div>';
   if (state.skipped) h += '<div class="warn">' + state.skipped + ' files ignored: the firmware only counts .jpg and .JPG.</div>';
   $('sourceInfo').innerHTML = h;
@@ -864,6 +914,33 @@ function renderModelInfo() {
   $('modelInfo').innerHTML = h;
 }
 
+// Rough numbers for the chosen layout: what the device needs and how fast it should run.
+// Memory follows the firmware's allocations. Speed is scaled from one measurement: 120x120, 4/8 filters, about 3 frames per second.
+function renderLayoutInfo() {
+  const N = Math.max(2, state.classes.length), f = totalFloats(N), MiB = 1048576, LIM = 7.8 * MiB;
+  const infBytes = (IN * IN * 3 + C1F * C1O * C1O + C1F * P1O * P1O + FLAT + f) * 4 + SRC * SRC * 3;
+  const trBytes = (f * 3 + FLAT * 2 + C1F * P1O * P1O + C1F * C1O * C1O) * 4;
+  const macs = (i, a, b) => { const c1 = i - 2, p1 = c1 / 2, c2 = p1 - 2; return c1 * c1 * 27 * a + c2 * c2 * 9 * a * b + c2 * c2 * b * N; };
+  const fps = 3 * macs(120, 4, 8) / macs(IN, C1F, C2F);
+  const fpsTxt = fps >= 10 ? Math.round(fps) : fps.toFixed(1);
+  const mb = b => (b / MiB).toFixed(1) + ' MB';
+  let h = '<div>Estimate for ' + N + ' classes' + (state.classes.length ? '' : ' (add classes for exact numbers)') + ':</div>';
+  h += '<div>Weights file: <b>' + mb(f * 4) + '</b> (' + (f * 4).toLocaleString() + ' bytes)' +
+       (f * 4 > MiB ? '. If the card runs at the sketch\'s 400 kHz setting, reading it at boot takes roughly ' + Math.round(f * 4 / 45000) + ' s.' : '.') + '</div>';
+  const ic = infBytes > LIM ? 'bad' : (infBytes > 6.5 * MiB ? 'warn' : 'ok');
+  h += '<div>Device inference memory (PSRAM): <b class="' + ic + '">' + mb(infBytes) + '</b> of about 8 MB' +
+       (ic === 'bad' ? '. Will not fit: lower the input size or the filter counts.' : (ic === 'warn' ? '. Tight, fragmentation may stop it.' : '.')) + '</div>';
+  const tc = infBytes + trBytes > LIM ? 'warn' : 'ok';
+  h += '<div>Training on the device needs <b class="' + tc + '">' + mb(trBytes) + '</b> more' +
+       (tc === 'warn' ? '. The device will say "not enough memory" for Train; Infer still works with weights trained here.' : '. Fits.') + '</div>';
+  h += '<div>Inference speed: about <b>' + fpsTxt + ' frames per second</b> (scaled from 3 fps measured at 120x120 with 4/8 filters; camera and JPEG time not scaled).</div>';
+  if (IN > SRC) h += '<div class="warn">Camera images are ' + SRC + 'x' + SRC + ', so ' + IN + 'x' + IN + ' only repeats pixels: no new detail, just more time and memory. It helps only if the firmware camera frame size is also raised.</div>';
+  else if (IN === SRC) h += '<div class="ok">240x240 is the camera frame itself: every pixel is used exactly once, no resampling.</div>';
+  else if (SRC % IN === 0) h += '<div class="ok">240 divided by ' + IN + ' is exactly ' + (SRC / IN) + ': even, clean resampling.</div>';
+  if (state.samples.length) h += '<div class="note">Browser memory for the decoded images: about ' + (state.samples.length * IN * IN * 3 / MiB).toFixed(0) + ' MB (' + state.samples.length + ' images). Browser training time also grows with the square of the size' + (IN >= 160 ? ': try few epochs first.' : '.') + '</div>';
+  $('layoutInfo').innerHTML = h;
+}
+
 function updateSplitInfo() {
   if (!state.samples.length) { $('splitInfo').textContent = ''; return; }
   const sp = currentSplit(), vc = new Array(state.classes.length).fill(0); sp.val.forEach(s => vc[s.cls]++);
@@ -881,7 +958,6 @@ async function addClass() {
   if (!name || /[\/\\:*?"<>|]/.test(name) || name.startsWith('.')) { alert('Use a plain folder name without / \\ : * ? " < > |'); return; }
   if (state.classes.includes(name)) { alert('That class already exists.'); return; }
   if (state.dirty && !confirm('Adding a class changes the weight layout and discards the unsaved model in memory. Continue?')) return;
-  if (state.mode === 'dir') { try { await classDir(-1 + 0, true).catch(() => 0); } catch (e) { /* handled below */ } }
   state.classes.push(name);
   if (state.mode === 'dir') { try { await classDir(state.classes.length - 1, true); } catch (e) { state.classes.pop(); log('Could not create the folder: ' + e.message); return; } }
   $('newClass').value = ''; resetModel();
@@ -937,7 +1013,7 @@ async function capture() {
   if (state.mode === 'dir') { try { await writeFile(await classDir(ci, true), name, blob); } catch (e) { log('Write to the SD folder failed: ' + e.message); return; } }
   addSample(ci, name, blob); state.evalStale = true;
   log('Captured ' + name + ' into ' + state.classes[ci] + ' (' + counts()[ci] + ' images).');
-  renderSource(); renderClasses(); renderBrowser(); updateSplitInfo();
+  renderSource(); renderClasses(); renderBrowser(); renderLayoutInfo(); updateSplitInfo();
 }
 
 // ---------- heatmap ----------
@@ -986,7 +1062,7 @@ async function drawInsp() {
   const cv = $('inspCanvas'), ctx = cv.getContext('2d');
   const img = await loadImg(s.url);
   ctx.imageSmoothingEnabled = false; ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(img, 0, 0, cv.width, cv.height);
-  if (state.net && state.net.N === state.classes.length && state.wStatus !== 'none' && state.wStatus !== 'refused') {
+  if (state.net && state.net.N === state.classes.length && state.net.key === layoutKey() && state.wStatus !== 'none' && state.wStatus !== 'refused') {
     forward(state.net, await getInput(s));
     if (heat.overlay) drawHeatOn(ctx, cv.width, state.net, heat.agg);
     $('inspProbs').innerHTML = barsHtml(state.net.a.probs);
@@ -1014,7 +1090,7 @@ async function moveSample(s, to) {
   const w = state.wrong.find(x => x.s === s); if (w) state.wrong = state.wrong.filter(x => x !== w);
   log('Moved ' + name + ' from ' + from + ' to ' + state.classes[to] + '.'); afterEdit();
 }
-function afterEdit() { $('insp').close(); state.insp = null; renderSource(); renderClasses(); renderBrowser(); updateSplitInfo(); renderEval(); }
+function afterEdit() { $('insp').close(); state.insp = null; renderSource(); renderClasses(); renderBrowser(); renderLayoutInfo(); updateSplitInfo(); renderEval(); }
 
 // ---------- parity self-test ----------
 async function parity(s) {
@@ -1080,15 +1156,16 @@ async function onTrain() {
   try {
     const all = sp.train.concat(sp.val);
     for (let i = 0; i < all.length; i++) {
-      await getInput(all[i]);
+      await getBytes(all[i]);
       if (i % 10 === 0) { $('trainStatus').textContent = 'Decoding images ' + (i + 1) + ' / ' + all.length + ' ...'; await tick(); }
     }
     if (!cont) { state.net = makeNet(N); log('Started from random He-init weights.'); } else log('Continuing from the weights in memory.');
     const net = state.net; for (const k of PARAM_ORDER) { net.m[k].fill(0); net.v[k].fill(0); }
+    const trainBuf = new Float32Array(IN * IN * 3);   // one reusable float input; the layout cannot change while training
     log('Train ' + sp.train.length + ' images, validation ' + sp.val.length + ', batch ' + o.batch + ', ' + o.epochs + ' epochs, lr ' + o.lr + (o.augment ? ', augmentation on' : '') + (o.dropout ? ', dropout ' + o.dropout : '') + '.');
     const t0 = performance.now();
     const res = await runTraining(net, sp.train, sp.val, o, {
-      input: s => s.input,
+      input: s => bytesToFloat(s.px, trainBuf),
       stopped: () => state.stop, paused: () => state.pause,
       onLog: m => log(m),
       onBatch: b => { $('trainStatus').textContent = 'Epoch ' + b.epoch + '/' + o.epochs + '  batch ' + b.b + '/' + b.bpe + '  loss ' + b.loss.toFixed(4) + '  batch acc ' + Math.round(b.acc * 100) + '%  lr ' + b.lr; },
@@ -1107,7 +1184,7 @@ async function onTrain() {
   state.training = false; state.pause = false; setTrainButtons();
 }
 function setTrainButtons() {
-  ['inSize', 'c1f', 'c2f'].forEach(id => $(id).disabled = state.training);
+  ['inSize', 'inSizeNum', 'c1f', 'c2f'].forEach(id => $(id).disabled = state.training);
   $('btnTrain').disabled = state.training; $('btnPause').disabled = !state.training; $('btnStop').disabled = !state.training;
   $('btnPause').textContent = state.pause ? 'Resume' : 'Pause';
 }
@@ -1118,11 +1195,12 @@ async function runEval() {
   let which = $('evalSet').value; const sp = currentSplit(); let set = which === 'val' ? sp.val : state.samples;
   if (which === 'val' && !set.length) { set = state.samples; which = 'all'; log('No validation images, evaluating on all images instead.'); }
   const N = state.classes.length, cm = Array.from({ length: N }, () => new Array(N).fill(0)), wrong = [];
+  const buf = new Float32Array(IN * IN * 3);
   for (let i = 0; i < set.length; i++) {
-    const s = set[i]; forward(state.net, await getInput(s));
+    const s = set[i]; forward(state.net, bytesToFloat(await getBytes(s), buf));
     const p = argmax(state.net.a.probs); cm[s.cls][p]++;
     if (p !== s.cls) wrong.push({ s, pred: p, conf: state.net.a.probs[p] });
-    if (i % 25 === 24) await tick();
+    if (IN >= 128 || i % 25 === 24) await tick();
   }
   state.cm = { cm, which, n: set.length, valCounts: countBy(sp.val), allCounts: counts() }; state.wrong = wrong; state.evalStale = false;
   renderEval();
@@ -1189,7 +1267,7 @@ async function liveLoop() {
 }
 
 // ---------- save ----------
-const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML firmware-v005', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Class names are read by this page and by firmware-v003 at boot. NUM_CLASSES, INPUT_SIZE and filter counts are compile-time in the sketch.' }, null, 2);
+const configJson = () => JSON.stringify({ page: 'vision-cnn-sd-trainer ' + VERSION, firmware: 'FULL VISION ML firmware-v007', input_size: IN, input_channels: 3, conv1_filters: C1F, conv2_filters: C2F, kernel_size: 3, classes: state.classes, weights_file: 'header/myWeights.bin', weights_floats: totalFloats(state.classes.length), note: 'Class names are read by this page and by the firmware at boot. NUM_CLASSES, INPUT_SIZE and filter counts are compile-time in the sketch.' }, null, 2);
 
 async function saveWeights() {
   const st = $('saveStatus');
@@ -1233,18 +1311,24 @@ async function saveZip() {
 }
 
 // ---------- model layout ----------
+// The preset list and the number box both show the current size. A size that is not in the list shows as "Custom".
 function syncLayoutControls() {
   const sel = $('inSize');
-  if (![...sel.options].some(o => +o.value === IN)) { const o = document.createElement('option'); o.value = IN; o.textContent = IN + ' x ' + IN; sel.appendChild(o); }
-  sel.value = IN; $('c1f').value = C1F; $('c2f').value = C2F;
+  sel.value = [...sel.options].some(o => o.value === String(IN)) ? String(IN) : 'custom';
+  $('inSizeNum').value = IN; $('c1f').value = C1F; $('c2f').value = C2F;
 }
 function onLayoutChange() {
   if (state.training) { syncLayoutControls(); return; }
-  const i = parseInt($('inSize').value), a = parseInt($('c1f').value), b = parseInt($('c2f').value);
-  if (!layoutValid(i, a, b)) { alert('Input size must be even, 16 to 128. Conv1 filters 1 to 16. Conv2 filters 1 to 32.'); syncLayoutControls(); return; }
-  if (i === IN && a === C1F && b === C2F) return;
+  const i = parseInt($('inSizeNum').value), a = parseInt($('c1f').value), b = parseInt($('c2f').value);
+  if (!layoutValid(i, a, b)) {
+    let msg = 'Input size must be even, ' + MIN_IN + ' to ' + MAX_IN + '. Conv1 filters 1 to 16. Conv2 filters 1 to 32.';
+    if (Number.isInteger(i) && i >= MIN_IN && i <= MAX_IN && i % 2 === 1) msg = i + ' is odd, and the 2x2 max pool needs an even size. Try ' + (i - 1) + ' or ' + (i + 1) + '.\n\n' + msg;
+    alert(msg); syncLayoutControls(); return;
+  }
+  if (i === IN && a === C1F && b === C2F) { syncLayoutControls(); return; }
   if (state.net && state.dirty && !confirm('Changing the layout discards the unsaved model in memory. Continue?')) { syncLayoutControls(); return; }
-  setLayout(i, a, b); state.samples.forEach(s => s.input = null); resetModel(); state.hist = { loss: [], tacc: [], vacc: [] };
+  setLayout(i, a, b); state.samples.forEach(s => s.px = null); resetModel(); state.hist = { loss: [], tacc: [], vacc: [] };
+  syncLayoutControls();
   log('Layout set to input ' + IN + ', conv1 ' + C1F + ', conv2 ' + C2F + ' (' + FLAT + ' flattened, ' + (totalFloats(Math.max(1, state.classes.length)) * 4) + ' bytes of weights for ' + Math.max(1, state.classes.length) + ' classes). Model in memory discarded. Update INPUT_SIZE, CONV1_FILTERS, CONV2_FILTERS in the sketch.');
   renderAll();
 }
@@ -1282,7 +1366,7 @@ async function burst() {
   }
   state.evalStale = true; btn.textContent = 'Burst 10 (B)'; bursting = false;
   log('Burst: saved ' + saved + ' of ' + BURST_N + ' images into ' + state.classes[ci] + ' (' + counts()[ci] + ' images).');
-  renderSource(); renderClasses(); renderBrowser(); updateSplitInfo();
+  renderSource(); renderClasses(); renderBrowser(); renderLayoutInfo(); updateSplitInfo();
 }
 
 // ---------- review mode ----------
@@ -1343,7 +1427,7 @@ async function deleteMarked() {
     URL.revokeObjectURL(s.url); state.samples = state.samples.filter(x => x !== s); state.wrong = state.wrong.filter(w => w.s !== s); state.marks.delete(s); del++;
   }
   state.evalStale = true; log('Review: deleted ' + del + ' of ' + list.length + ' marked images.');
-  renderSource(); renderClasses(); renderBrowser(); updateSplitInfo(); renderEval(); revClassOptions(); await buildRev(rev.i);
+  renderSource(); renderClasses(); renderBrowser(); renderLayoutInfo(); updateSplitInfo(); renderEval(); revClassOptions(); await buildRev(rev.i);
 }
 
 // ---------- config.json only ----------
@@ -1401,7 +1485,7 @@ async function serSend() {
   $('serIn').value = ''; $('serIn').focus();
 }
 
-// ---------- device debug frames (firmware-v005) ----------
+// ---------- device debug frames (firmware-v005 or later) ----------
 let serPend = '', serBeat = null;
 const dev = { f: null, tok: 0 };
 function serDebugSync() { if (ser.writer) ser.writer.write($('serDebug').checked ? 'D' : 'd').catch(() => {}); }
@@ -1494,7 +1578,13 @@ document.addEventListener('keydown', e => {
 });
 $('btnBurst').onclick = burst;
 $('btnReview').onclick = openReview;
-$('inSize').onchange = onLayoutChange; $('c1f').onchange = onLayoutChange; $('c2f').onchange = onLayoutChange;
+// Layout: picking a preset copies it into the number box; typing in the box applies on Enter or when leaving it.
+$('inSize').onchange = () => {
+  const v = $('inSize').value;
+  if (v === 'custom') { $('inSizeNum').focus(); $('inSizeNum').select(); return; }
+  $('inSizeNum').value = v; onLayoutChange();
+};
+$('inSizeNum').onchange = onLayoutChange; $('c1f').onchange = onLayoutChange; $('c2f').onchange = onLayoutChange;
 $('revClose').onclick = () => $('rev').close();
 $('revClass').onchange = () => buildRev(0);
 $('revSusp').onchange = () => buildRev(0);
