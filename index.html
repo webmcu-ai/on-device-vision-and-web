@@ -108,7 +108,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
     <input type="file" id="zipFile" accept=".zip,application/zip" hidden>
   </div>
   <p class="note" id="dirNote"></p>
-  <div class="info" id="sourceInfo">Nothing loaded yet. Pick the root of the SD card (the folder that contains <b>images</b> and <b>header</b>).</div>
+  <div class="info" id="sourceInfo">Nothing loaded yet. Pick the root of the SD card (the folder that contains <b>images</b> and <b>header</b>), load a .zip, or just add a class below to start without a folder.</div>
 </section>
 
 <!-- ============ 2 CLASSES AND DATA ============ -->
@@ -126,7 +126,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
   <div class="cam">
     <div class="vwrap" id="capWrap"><video id="capVideo" class="mir" playsinline muted></video><span id="rec" class="rec">● REC</span></div>
     <div style="flex:1;min-width:230px">
-      <div class="row"><button id="btnCam">Start camera</button></div>
+      <div class="row"><button id="btnCam">Start camera</button> <label class="chk"><input type="checkbox" id="rearCam" onchange="restartCam()"> Rear camera (phones)</label></div>
       <div class="row">
         <select id="capClass" aria-label="Class to capture into"></select>
         <button id="btnCapture" class="primary">Capture (Space)</button>
@@ -361,7 +361,7 @@ button.burst.recording{background:var(--bad);color:#fff;border-color:var(--bad);
 
 <script>
 'use strict';
-const VERSION = 'v006';
+const VERSION = 'v008';
 
 /* ==CORE START== (no DOM use below this line until CORE END) */
 
@@ -708,7 +708,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const MAX_STEP = 0.05;   // browser safety: no single weight update larger than this
 
 const state = {
-  mode: null, root: null, srcName: '', classes: [], samples: [], skipped: 0,
+  mode: null, root: null, memSession: false, srcName: '', classes: [], samples: [], skipped: 0,
   net: null, wStatus: 'none', wNote: '', dirty: false, hadConfig: false, zipHadWeights: false,
   stream: null, live: false, insp: null, wrong: [], cm: null, evalStale: false, evalCount: 0,
   openCls: new Set(), marks: new Set(), training: false, stop: false, pause: false, hist: { loss: [], tacc: [], vacc: [] }, epochsPlanned: 20
@@ -833,7 +833,8 @@ async function loadZipFile(file) {
 }
 
 async function ingest(src) {
-  clearData();
+  if (state.memSession && state.samples.length && !confirm('The in-memory session has ' + state.samples.length + ' images that are not saved. Loading this source discards them. Continue?')) return;
+  clearData(); state.memSession = false;
   state.mode = src.mode; state.root = src.root; state.srcName = src.name; state.skipped = src.skipped; state.hadImagesDir = src.hadImagesDir;
   let order = [];
   if (src.cfg && Array.isArray(src.cfg.classes)) { order = src.cfg.classes.filter(c => typeof c === 'string'); state.hadConfig = true; }
@@ -856,7 +857,7 @@ function renderAll() { renderSource(); renderClasses(); renderBrowser(); renderM
 function renderSource() {
   const c = counts(), n = state.samples.length; let h = '';
   if (!state.mode) { $('sourceInfo').innerHTML = 'Nothing loaded yet. Pick the root of the SD card (the folder that contains <b>images</b> and <b>header</b>).'; return; }
-  h += '<div><b>' + esc(state.srcName) + '</b> - ' + (state.mode === 'dir' ? 'SD folder, changes are written to the card' : 'zip, changes stay in memory until you Save .zip') + '</div>';
+  h += '<div><b>' + esc(state.srcName) + '</b> - ' + (state.mode === 'dir' ? 'SD folder, changes are written to the card' : state.memSession ? 'no folder, work stays in memory until you Save .zip' : 'zip, changes stay in memory until you Save .zip') + '</div>';
   if (!state.hadImagesDir) h += '<div class="bad">No images/ folder found. Expected images/&lt;class&gt;/img_*.jpg. You can add classes below.</div>';
   h += '<div>Classes: ' + state.classes.length + ' (' + state.classes.map((k, i) => esc(k) + ' ' + c[i]).join(', ') + ') - ' + n + ' images</div>';
   if (state.wStatus === 'refused') h += '<div class="bad">Weights: ' + esc(state.wNote) + '</div>';
@@ -952,11 +953,19 @@ function updateSplitInfo() {
 async function classDir(ci, create) { const img = await state.root.getDirectoryHandle('images', { create }); return img.getDirectoryHandle(state.classes[ci], { create }); }
 async function writeFile(dir, name, blob) { const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(blob); await w.close(); }
 
+// No folder or zip picked yet: start an empty in-memory session (zip mode) so students can try the page without an SD card
+function ensureSession() {
+  if (state.mode) return;
+  clearData();
+  Object.assign(state, { mode: 'zip', root: null, memSession: true, srcName: 'New in-memory session', hadImagesDir: true });
+  log('No folder loaded: started an empty in-memory session. Use Save .zip to keep your work.');
+}
+
 async function addClass() {
   const name = $('newClass').value.trim();
-  if (!state.mode) { alert('Load a data source first.'); return; }
   if (!name || /[\/\\:*?"<>|]/.test(name) || name.startsWith('.')) { alert('Use a plain folder name without / \\ : * ? " < > |'); return; }
   if (state.classes.includes(name)) { alert('That class already exists.'); return; }
+  ensureSession();
   if (state.dirty && !confirm('Adding a class changes the weight layout and discards the unsaved model in memory. Continue?')) return;
   state.classes.push(name);
   if (state.mode === 'dir') { try { await classDir(state.classes.length - 1, true); } catch (e) { state.classes.pop(); log('Could not create the folder: ' + e.message); return; } }
@@ -981,11 +990,12 @@ const capCanvas = document.createElement('canvas'); capCanvas.width = capCanvas.
 const cctx = capCanvas.getContext('2d');
 async function startCam() {
   if (state.stream) return;
-  try { state.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }); }
+  try { state.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: $('rearCam').checked ? 'environment' : 'user' }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }); }
   catch (e) { log('Camera error: ' + e.message); return; }
   for (const v of [$('capVideo'), $('liveVideo')]) { v.srcObject = state.stream; try { await v.play(); } catch (e) { /* ignore */ } }
   $('btnCam').textContent = 'Stop camera';
 }
+async function restartCam() { if (state.stream) { stopCam(); await startCam(); } }
 function stopCam() {
   state.live = false; $('btnLive').textContent = 'Start live';
   if (state.stream) state.stream.getTracks().forEach(t => t.stop());
@@ -1005,9 +1015,8 @@ function grabFrame() {
 const frameBlob = () => new Promise(r => capCanvas.toBlob(r, 'image/jpeg', 0.85));
 
 async function capture() {
-  if (!state.mode) { log('Load a data source first (section 1).'); return; }
   const ci = parseInt($('capClass').value);
-  if (!state.classes[ci]) { log('Add or pick a class first.'); return; }
+  if (!state.classes[ci]) { log('Add a class first (section 2).'); return; }
   if (!state.stream || !grabFrame()) { log('Start the camera first.'); return; }
   const blob = await frameBlob(), name = 'img_' + Date.now() + '.jpg';
   if (state.mode === 'dir') { try { await writeFile(await classDir(ci, true), name, blob); } catch (e) { log('Write to the SD folder failed: ' + e.message); return; } }
@@ -1338,9 +1347,8 @@ let bursting = false; const BURST_N = 10;
 const nextVideoFrame = () => new Promise(r => { const v = $('capVideo'), t = setTimeout(r, 250); if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { clearTimeout(t); r(); }); else { clearTimeout(t); setTimeout(r, 34); } });
 async function burst() {
   if (bursting) return;
-  if (!state.mode) { log('Load a data source first (section 1).'); return; }
   const ci = parseInt($('capClass').value);
-  if (!state.classes[ci]) { log('Add or pick a class first.'); return; }
+  if (!state.classes[ci]) { log('Add a class first (section 2).'); return; }
   if (!state.stream) { log('Start the camera first.'); return; }
   let dir = null;
   if (state.mode === 'dir') { try { dir = await classDir(ci, true); } catch (e) { log('Cannot open the class folder: ' + e.message); return; } }
