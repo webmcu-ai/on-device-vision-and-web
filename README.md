@@ -13,5 +13,5 @@ This github supports the efficient web training page.
 Do the demo on your cell phone, no need to save the data to the sd card,  set three classes, 300 ms burst, start camera, 30 images 
 
 QR Code to demo.<br>
-<img width="556" height="562" alt="image" src="https://github.com/user-attachments/assets/2e4f582b-1971-4aaa-aaf3-e460801ee8c7" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/2e4f582b-1971-4aaa-aaf3-e460801ee8c7" />
 
